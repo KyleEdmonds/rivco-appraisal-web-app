@@ -9,6 +9,7 @@
   --navy-dark: #2e4356;
   --navy-light: #5d7a8f;
   --teal: #33997f;        /* county nav strip */
+  --teal-dark: #277a63;
   --gold: #b8860b;
   --gold-light: #d4a843;
   --bg: #f1f5f9;          /* slate-100 */
@@ -47,7 +48,7 @@ input, select, textarea { font-family: inherit; }
   height: 48px;
   padding: 0 12px;
   background: var(--navy);
-  border-bottom: 2px solid var(--navy-dark);
+  border-bottom: 3px solid var(--teal);
   color: #fff;
   flex: 0 0 auto;
 }
@@ -247,8 +248,8 @@ input, select, textarea { font-family: inherit; }
   flex-wrap: wrap;
   justify-content: flex-start;
   gap: 4px;
-  border: 1px solid var(--border);
-  background: var(--bg);
+  border: 1px solid var(--teal-dark);
+  background: var(--teal);
   padding: 4px;
   height: 36px;
   align-items: center;
@@ -258,13 +259,13 @@ input, select, textarea { font-family: inherit; }
   background: transparent;
   font-size: 11px;
   font-weight: 500;
-  color: #475569;
+  color: rgba(255, 255, 255, 0.75);
   padding: 5px 12px;
   cursor: pointer;
   border-radius: 0;
 }
-.tab:hover { color: var(--navy); }
-.tab.active { background: var(--teal); color: #fff; }
+.tab:hover { color: #fff; }
+.tab.active { background: var(--teal-dark); color: #fff; font-weight: 700; }
 .tab-content {
   flex: 1 1 auto;
   min-height: 0;
@@ -669,7 +670,7 @@ textarea.inp { height: auto; padding: 4px 6px; resize: vertical; line-height: 1.
   background: var(--navy);
   color: #fff;
   padding: 10px 24px;
-  border-bottom: 2px solid var(--navy-dark);
+  border-bottom: 3px solid var(--teal);
 }
 .sheet-masthead .brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .sheet-masthead .seal { width: 64px; height: 64px; flex: 0 0 auto; }
