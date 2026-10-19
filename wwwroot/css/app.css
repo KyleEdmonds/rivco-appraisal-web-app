@@ -55,7 +55,7 @@ input, select, textarea { font-family: inherit; }
 .tb-left { display: flex; align-items: center; gap: 20px; min-width: 0; }
 .tb-seal { width: 88px; height: 88px; flex: 0 0 auto; position: relative; top: 12px; }
 .tb-title { display: flex; flex-direction: column; line-height: 1.2; white-space: nowrap; }
-.tb-county { font-size: 24px; font-weight: 500; color: var(--gold-light); }
+.tb-county { font-size: 20px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--gold-light); }
 .tb-office { font-size: 26px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #fff; }
 .tb-center { display: flex; align-items: center; gap: 32px; }
 .tb-headline { text-align: right; line-height: 1.2; min-width: 0; }
