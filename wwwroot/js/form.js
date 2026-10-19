@@ -294,7 +294,7 @@ function subjectTab() {
     refreshComputed();
   };
 
-  const summary = section('Property Summary', null,
+  const summary = section('Property & Land Summary', null,
     el('button', { class: 'btn sm', onclick: addOutbuilding }, '+ Add Outbuilding'),
     el('div', { class: 'dense-grid' },
       ...dg('Address', denseInput('property.address')),
@@ -303,13 +303,18 @@ function subjectTab() {
       ...dg('Property Type', denseSelect('improvements.primary.type', TYPE_OPTIONS)),
       ...dg('Building Area (SF)', denseNum('improvements.primary.grossFloorArea')),
       ...dg('Leasable Area (SF)', denseNum('improvements.primary.nla')),
-      ...dg('Site Area (Acres)', denseNum('land.acres')),
-      ...dg('Zoning', denseInput('land.zoning')),
       ...dg('Year Built', denseNum('improvements.primary.yearBuilt')),
       ...dg('Effective Age', el('input', { class: 'inp', readonly: true, 'data-calc': 'effAge', 'data-fmt': 'num' })),
       ...dg('Quality', denseInput('improvements.primary.quality')),
       ...dg('Condition', denseSelect('improvements.primary.condition', CONDITION_OPTIONS)),
+      ...dg('Site Area (Acres)', denseNum('land.acres')),
+      ...dg('Site Area (SF)', denseNum('land.siteAreaSqFt')),
+      ...dg('Zoning', denseInput('land.zoning')),
+      ...dg('Frontage (ft)', denseNum('land.frontageFt')),
+      ...dg('Land Value ($)', denseNum('land.landValue')),
+      ...dg('Land Value Method', denseInput('land.landValueMethod')),
     ),
+    areaField('Land Value Notes', 'land.landValueNotes', 2),
   );
 
   // Outbuildings
@@ -342,19 +347,6 @@ function subjectTab() {
       )
     : null;
 
-  // Land value
-  const land = section('Land', null, null,
-    el('div', { class: 'field-grid c3' },
-      numField('Site Area (SF)', 'land.siteAreaSqFt'),
-      numField('Acres', 'land.acres'),
-      numField('Land Value ($)', 'land.landValue', { prefix: '$' }),
-      textField('Zoning', 'land.zoning'),
-      textField('Land Value Method', 'land.landValueMethod'),
-      textField('Frontage (ft)', 'land.frontageFt'),
-    ),
-    areaField('Land Value Notes', 'land.landValueNotes', 2),
-  );
-
   // Images: map + 3 photos
   const images = el('div', { class: 'img-row' },
     imgBox('Parcel Map', 'property.mapImageUrl'),
@@ -365,7 +357,7 @@ function subjectTab() {
     imgBox('Property Image 3', 'property.subjectPhotoUrl3'),
   );
 
-  return [summary, obSection, land, images, images2];
+  return [summary, obSection, images, images2];
 }
 
 // --- Sales tab (SalesTab + SalesGrid + CompForm) -------------------------------
