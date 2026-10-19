@@ -253,7 +253,7 @@ input, select, textarea { font-family: inherit; }
   flex-wrap: wrap;
   justify-content: flex-start;
   gap: 4px;
-  border: 1px solid var(--navy-dark);
+  border: 1px solid var(--teal);
   background: var(--navy);
   padding: 4px;
   height: 36px;
