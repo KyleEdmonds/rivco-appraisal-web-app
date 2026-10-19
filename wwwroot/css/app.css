@@ -405,10 +405,19 @@ textarea.inp { height: auto; padding: 4px 6px; resize: vertical; line-height: 1.
   align-items: center;
 }
 .dense-grid.c4 { grid-template-columns: auto minmax(64px, 1fr) auto minmax(64px, 1fr) auto minmax(64px, 1fr) auto minmax(64px, 1fr); gap: 4px 10px; }
-/* stacked-label dense grid (label above field, narrow cells, many columns) */
-.dg-stack { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px 10px; align-items: start; }
+/* Property Summary — logical field groups (label above field) */
 .dg-cell { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.dg-cell-label { font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; color: #475569; line-height: 1.2; }
+.dg-cell-label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #475569; line-height: 1.2; }
+.ps-group { margin-bottom: 16px; }
+.ps-group:last-child { margin-bottom: 0; }
+.ps-group-title {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--navy);
+  margin-bottom: 8px;
+}
+.ps-group-title::before { content: ''; width: 3px; height: 11px; background: var(--gold); flex: 0 0 auto; }
+.ps-group-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px 12px; }
 .dense-grid .dg-label { font-size: 10px; font-weight: 600; color: #475569; white-space: nowrap; }
 .field-grid { display: grid; gap: 12px 16px; }
 .field-grid.c2 { grid-template-columns: repeat(2, 1fr); }

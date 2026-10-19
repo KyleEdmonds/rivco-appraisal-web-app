@@ -276,6 +276,11 @@ function subjectTab() {
   const { outbuildings } = d.improvements;
 
   const dgCell = (label, node) => el('div', { class: 'dg-cell' }, el('span', { class: 'dg-cell-label' }, label), node);
+  const psGroup = (title, fields, extra) => el('div', { class: 'ps-group' },
+    el('div', { class: 'ps-group-title' }, title),
+    el('div', { class: 'ps-group-grid' }, ...fields),
+    extra || null,
+  );
 
   // Property Summary — combined site + building characteristics (dense grid)
   const addOutbuilding = () => {
@@ -296,25 +301,30 @@ function subjectTab() {
 
   const summary = section('Property Summary', null,
     el('button', { class: 'btn sm', onclick: addOutbuilding }, '+ Add Outbuilding'),
-    el('div', { class: 'dg-stack' },
+    psGroup('Property', [
       dgCell('Address', denseInput('property.address')),
       dgCell('Parcel Number', denseInput('property.apn')),
       dgCell('City', denseInput('property.city')),
       dgCell('Property Type', denseSelect('improvements.primary.type', TYPE_OPTIONS)),
+    ]),
+    psGroup('Building', [
       dgCell('Building Area (SF)', denseNum('improvements.primary.grossFloorArea')),
       dgCell('Leasable Area (SF)', denseNum('improvements.primary.nla')),
       dgCell('Year Built', denseNum('improvements.primary.yearBuilt')),
       dgCell('Effective Age', el('input', { class: 'inp', readonly: true, 'data-calc': 'effAge', 'data-fmt': 'num' })),
       dgCell('Quality', denseInput('improvements.primary.quality')),
       dgCell('Condition', denseSelect('improvements.primary.condition', CONDITION_OPTIONS)),
+    ]),
+    psGroup('Land / Site', [
       dgCell('Site Area (Acres)', denseNum('land.acres')),
       dgCell('Site Area (SF)', denseNum('land.siteAreaSqFt')),
       dgCell('Zoning', denseInput('land.zoning')),
       dgCell('Frontage (ft)', denseNum('land.frontageFt')),
+    ]),
+    psGroup('Land Value', [
       dgCell('Land Value ($)', denseNum('land.landValue')),
       dgCell('Land Value Method', denseInput('land.landValueMethod')),
-    ),
-    areaField('Land Value Notes', 'land.landValueNotes', 2),
+    ], areaField('Land Value Notes', 'land.landValueNotes', 2)),
   );
 
   // Outbuildings
