@@ -34,7 +34,10 @@ function renderTopBar() {
   bar.replaceChildren(
     el('div', { class: 'tb-left' },
       el('img', { class: 'tb-seal', src: state.tenant.sealUrl || '/img/seal.png', alt: '' }),
-      el('div', { class: 'tb-title' }, 'Appraisal Workflows'),
+      el('div', { class: 'tb-title' },
+        el('div', { class: 'tb-county' }, state.tenant.countyName || 'County of Riverside'),
+        el('div', { class: 'tb-office' }, state.tenant.officeName || 'Appraisal Workflows'),
+      ),
     ),
     el('div', { class: 'tb-center' },
       el('div', { class: 'tb-headline' },

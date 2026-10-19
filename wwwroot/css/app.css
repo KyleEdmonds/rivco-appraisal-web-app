@@ -5,9 +5,10 @@
    with navy header bars, split pane with drag handle.
    --------------------------------------------------------------------------- */
 :root {
-  --navy: #1e293b;
-  --navy-dark: #0f172a;
-  --navy-light: #334155;
+  --navy: #40596b;        /* county steel blue (header) */
+  --navy-dark: #2e4356;
+  --navy-light: #5d7a8f;
+  --teal: #33997f;        /* county nav strip */
   --gold: #b8860b;
   --gold-light: #d4a843;
   --bg: #f1f5f9;          /* slate-100 */
@@ -15,7 +16,7 @@
   --text: #1e293b;
   --muted: #64748b;       /* slate-500 */
   --muted-2: #94a3b8;     /* slate-400 */
-  --border: #334155;      /* slate-700 (section borders) */
+  --border: #40596b;      /* section borders (steel blue) */
   --border-soft: #cbd5e1; /* slate-300 */
   --border-input: #94a3b8;/* slate-400 (input borders) */
   --panel: #ffffff;
@@ -52,7 +53,9 @@ input, select, textarea { font-family: inherit; }
 }
 .tb-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .tb-seal { width: 36px; height: 36px; flex: 0 0 auto; }
-.tb-title { font-size: 14px; font-weight: 700; line-height: 1.1; white-space: nowrap; }
+.tb-title { display: flex; flex-direction: column; line-height: 1.2; white-space: nowrap; }
+.tb-county { font-size: 12px; font-weight: 500; color: var(--gold-light); }
+.tb-office { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #fff; }
 .tb-center { display: flex; align-items: center; gap: 16px; }
 .tb-headline { text-align: right; line-height: 1.2; min-width: 0; }
 .tb-headline .addr { font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 320px; }
@@ -261,7 +264,7 @@ input, select, textarea { font-family: inherit; }
   border-radius: 0;
 }
 .tab:hover { color: var(--navy); }
-.tab.active { background: var(--navy); color: #fff; }
+.tab.active { background: var(--teal); color: #fff; }
 .tab-content {
   flex: 1 1 auto;
   min-height: 0;
@@ -669,7 +672,7 @@ textarea.inp { height: auto; padding: 4px 6px; resize: vertical; line-height: 1.
   border-bottom: 2px solid var(--navy-dark);
 }
 .sheet-masthead .brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
-.sheet-masthead .seal { width: 80px; height: 80px; flex: 0 0 auto; }
+.sheet-masthead .seal { width: 64px; height: 64px; flex: 0 0 auto; }
 .sheet-masthead .report-title { font-size: 18px; font-weight: 700; letter-spacing: 0.03em; line-height: 1.1; }
 .sheet-masthead .brand-line { font-size: 10px; color: var(--gold-light); }
 .sheet-masthead .dates { text-align: right; flex: 0 0 auto; }
