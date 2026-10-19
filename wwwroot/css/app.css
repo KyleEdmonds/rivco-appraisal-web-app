@@ -253,7 +253,7 @@ input, select, textarea { font-family: inherit; }
   flex-wrap: wrap;
   justify-content: flex-start;
   gap: 4px;
-  border: 1px solid var(--teal);
+  border: 3px solid var(--teal);
   background: var(--navy);
   padding: 4px;
   height: 36px;
@@ -264,6 +264,8 @@ input, select, textarea { font-family: inherit; }
   background: transparent;
   font-size: 11px;
   font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
   color: rgba(255, 255, 255, 0.75);
   padding: 5px 12px;
   cursor: pointer;
@@ -398,7 +400,7 @@ textarea.inp { height: auto; padding: 4px 6px; resize: vertical; line-height: 1.
   color: var(--muted);
 }
 .chip .chip-value { font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; border-bottom: 1px solid currentColor; }
-.chip.emphasis { border-color: var(--navy); background: var(--navy); color: #fff; }
+.chip.emphasis { border: 3px solid var(--teal); background: var(--navy); color: #fff; }
 .chip.emphasis .chip-label { color: #cbd5e1; }
 
 /* --- schedule rows (income / cost / reconciliation) --- */
