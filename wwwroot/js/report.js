@@ -220,27 +220,47 @@ export function renderReport() {
   root.replaceChildren(...contents.map((c, i) =>
     el('div', { class: 'sheet-scale' }, sheet(i + 1, total, c)),
   ));
+  const meta = document.querySelector('.staging-toolbar .st-meta');
+  if (meta) meta.textContent = `${total} sheets · 8.5×11`;
   fitSheets();
   updateTopBar();
 }
 
-// Scale each sheet to fit the pane width (like the original zoom wrapper).
-export function fitSheets() {
+// --- zoom (mirrors the original RightStaging auto-fit / manual zoom) ---
+const SHEET_W = 816;
+const SHEET_H = 1056;
+let manualZoom = null;
+
+export function getZoom() {
+  if (manualZoom != null) return manualZoom;
   const pane = document.querySelector('.pane-right');
-  if (!pane) return;
-  const s = Math.min(1, (pane.clientWidth - 32) / 816);
+  if (!pane) return 1;
+  return Math.min(1.4, Math.max(0.2, (pane.clientWidth - 32) / SHEET_W));
+}
+export function zoomBy(delta) {
+  manualZoom = Math.min(1.4, Math.max(0.3, Math.round((getZoom() + delta) * 100) / 100));
+  fitSheets();
+}
+export function zoomFit() {
+  manualZoom = null;
+  fitSheets();
+}
+
+// Scale each sheet to fit the pane width (like the original zoom wrapper):
+// wrapper is exactly the scaled size, inner sheet scales from top-left.
+export function fitSheets() {
+  const s = getZoom();
   document.querySelectorAll('#report-root .sheet-scale').forEach((w) => {
     const sh = w.firstElementChild;
     if (!sh) return;
-    if (s < 1) {
-      sh.style.transform = `scale(${s})`;
-      sh.style.transformOrigin = 'top center';
-      w.style.height = `${sh.offsetHeight * s}px`;
-    } else {
-      sh.style.transform = '';
-      w.style.height = '';
-    }
+    w.style.width = `${SHEET_W * s}px`;
+    w.style.height = `${SHEET_H * s}px`;
+    sh.style.width = `${SHEET_W}px`;
+    sh.style.transform = `scale(${s})`;
+    sh.style.transformOrigin = 'top left';
   });
+  const pct = document.querySelector('.staging-toolbar .zoom-pct');
+  if (pct) pct.textContent = `${Math.round(s * 100)}%`;
 }
 
 // Live top bar: property headline + total assessed (matches original TopBar).

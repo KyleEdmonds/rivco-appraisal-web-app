@@ -610,7 +610,19 @@ textarea.inp { height: auto; padding: 4px 6px; resize: vertical; line-height: 1.
 .staging-toolbar .zoom-pct { font-size: 11px; font-variant-numeric: tabular-nums; color: #cbd5e1; min-width: 40px; text-align: center; }
 .report-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .report-stack { display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 16px; }
-#report-root { align-items: center; }
+#report-root { align-items: center; overflow-y: auto; overflow-x: hidden; gap: 16px; padding: 16px; }
+.st-btn {
+  height: 28px;
+  border: 1px solid #64748b;
+  background: transparent;
+  color: #cbd5e1;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 0 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.st-btn:hover { background: var(--navy-dark); color: #fff; }
 .sheet-scale { overflow: hidden; flex: 0 0 auto; }
 .sheet-zoom { transform-origin: top left; }
 
@@ -826,10 +838,9 @@ textarea.inp { height: auto; padding: 4px 6px; resize: vertical; line-height: 1.
   body { overflow: visible; }
   #topbar, .pane-left, .split-handle, .staging-toolbar { display: none !important; }
   #main, .split, .pane-right { display: block; width: 100%; height: auto; }
-  .report-scroll { overflow: visible; }
-  .report-stack { padding: 0; gap: 0; }
+  #report-root { display: block; overflow: visible; padding: 0; }
   .sheet-scale { width: auto !important; height: auto !important; overflow: visible; }
-  .sheet-zoom { transform: none !important; }
+  .sheet-scale .sheet { transform: none !important; }
   .sheet { page-break-after: always; border: 0; }
 }
 

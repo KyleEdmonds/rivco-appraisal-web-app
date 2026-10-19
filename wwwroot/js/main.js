@@ -5,7 +5,7 @@
 // ---------------------------------------------------------------------------
 import { api, state, saveCurrent, loadAppraisal, newAppraisal, fmtCurrency, fmtDate, computeAppraisal } from './core.js';
 import { renderForm, setTab } from './form.js';
-import { renderReport, exportPDF, fitSheets } from './report.js';
+import { renderReport, exportPDF, fitSheets, zoomBy, zoomFit } from './report.js';
 
 function el(tag, attrs = {}, ...children) {
   const node = document.createElement(tag);
@@ -215,6 +215,29 @@ function controlBar() {
   );
 }
 
+// Right-pane staging toolbar (matches the original Report Preview bar).
+function stagingToolbar() {
+  const pct = el('span', { class: 'zoom-pct' }, '100%');
+  const btn = (label, title, fn) => {
+    const b = el('button', { class: 'st-btn', title });
+    b.textContent = label;
+    b.addEventListener('click', fn);
+    return b;
+  };
+  return el('div', { class: 'staging-toolbar' },
+    el('div', { class: 'st-left' },
+      el('span', { class: 'st-title' }, 'Report Preview'),
+      el('span', { class: 'st-meta' }, '— sheets · 8.5×11'),
+    ),
+    el('div', { class: 'st-right' },
+      btn('−', 'Zoom out', () => zoomBy(-0.1)),
+      pct,
+      btn('+', 'Zoom in', () => zoomBy(0.1)),
+      btn('Fit', 'Fit to width', zoomFit),
+    ),
+  );
+}
+
 function showAppraisal() {
   const main = document.getElementById('main');
   const left = el('div', { class: 'pane pane-left' },
@@ -222,7 +245,10 @@ function showAppraisal() {
     el('div', { id: 'form-root', class: 'form-root', style: 'flex:1 1 auto;min-height:0;display:flex;flex-direction:column' }),
   );
   const handle = el('div', { class: 'split-handle' });
-  const right = el('div', { class: 'pane pane-right' }, el('div', { id: 'report-root', class: 'report-root', style: 'flex:1 1 auto;min-height:0;display:flex;flex-direction:column' }));
+  const right = el('div', { class: 'pane pane-right' },
+    stagingToolbar(),
+    el('div', { id: 'report-root', class: 'report-root', style: 'flex:1 1 auto;min-height:0;display:flex;flex-direction:column' }),
+  );
   const split = el('div', { class: 'split' }, left, handle, right);
   main.replaceChildren(split);
 
