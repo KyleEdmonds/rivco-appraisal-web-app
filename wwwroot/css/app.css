@@ -248,8 +248,8 @@ input, select, textarea { font-family: inherit; }
   flex-wrap: wrap;
   justify-content: flex-start;
   gap: 4px;
-  border: 1px solid var(--teal-dark);
-  background: var(--teal);
+  border: 1px solid var(--navy-dark);
+  background: var(--navy);
   padding: 4px;
   height: 36px;
   align-items: center;
