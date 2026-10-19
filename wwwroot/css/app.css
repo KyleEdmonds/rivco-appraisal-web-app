@@ -108,10 +108,10 @@ input, select, textarea { font-family: inherit; }
 .btn.dark-ghost.icon { width: 24px; padding: 0; justify-content: center; }
 
 /* --- main / split pane with drag handle --- */
-#main { flex: 1 1 auto; min-height: 0; display: flex; }
-.split { display: flex; width: 100%; min-height: 0; }
+#main { flex: 1 1 auto; min-height: 0; display: flex; width: 100%; }
+.split { display: flex; flex: 1 1 auto; width: 100%; height: 100%; min-height: 0; }
 .pane { min-height: 0; min-width: 0; display: flex; flex-direction: column; }
-.pane-left { background: var(--bg-soft); }
+.pane-left { flex: 0 0 calc(50% - 4px); width: calc(50% - 4px); background: var(--bg-soft); }
 .pane-right { flex: 1 1 auto; background: #e2e8f0; }
 .split-handle {
   width: 8px;
@@ -610,6 +610,7 @@ textarea.inp { height: auto; padding: 4px 6px; resize: vertical; line-height: 1.
 .staging-toolbar .zoom-pct { font-size: 11px; font-variant-numeric: tabular-nums; color: #cbd5e1; min-width: 40px; text-align: center; }
 .report-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; }
 .report-stack { display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 16px; }
+#report-root { align-items: center; }
 .sheet-scale { overflow: hidden; flex: 0 0 auto; }
 .sheet-zoom { transform-origin: top left; }
 
