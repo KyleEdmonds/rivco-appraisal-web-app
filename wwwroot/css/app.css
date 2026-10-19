@@ -673,10 +673,10 @@ textarea.inp { height: auto; padding: 4px 6px; resize: vertical; line-height: 1.
   background: var(--navy);
   color: #fff;
   padding: 0 24px;
-  border-bottom: 12px solid var(--teal);
+  border-bottom: 10px solid var(--teal);
 }
 .sheet-masthead .brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
-.sheet-masthead .seal { width: 80px; height: 80px; flex: 0 0 auto; position: relative; top: 6px; }
+.sheet-masthead .seal { width: 68px; height: 68px; flex: 0 0 auto; position: relative; top: 5px; }
 .sheet-masthead .report-title { font-size: 18px; font-weight: 700; letter-spacing: 0.03em; line-height: 1.1; }
 .sheet-masthead .brand-line { font-size: 10px; color: var(--gold-light); }
 .sheet-masthead .dates { text-align: right; flex: 0 0 auto; }
