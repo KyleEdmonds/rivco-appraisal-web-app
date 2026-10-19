@@ -404,7 +404,7 @@ textarea.inp { height: auto; padding: 4px 6px; resize: vertical; line-height: 1.
   gap: 2px 8px;
   align-items: center;
 }
-.dense-grid.c2 { grid-template-columns: auto 1fr auto 1fr; gap: 6px 12px; }
+.dense-grid.c4 { grid-template-columns: auto minmax(64px, 1fr) auto minmax(64px, 1fr) auto minmax(64px, 1fr) auto minmax(64px, 1fr); gap: 4px 10px; }
 .dense-grid .dg-label { font-size: 10px; font-weight: 600; color: #475569; white-space: nowrap; }
 .field-grid { display: grid; gap: 12px 16px; }
 .field-grid.c2 { grid-template-columns: repeat(2, 1fr); }

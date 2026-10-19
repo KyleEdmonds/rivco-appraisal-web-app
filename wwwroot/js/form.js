@@ -296,7 +296,7 @@ function subjectTab() {
 
   const summary = section('Property Summary', null,
     el('button', { class: 'btn sm', onclick: addOutbuilding }, '+ Add Outbuilding'),
-    el('div', { class: 'dense-grid c2' },
+    el('div', { class: 'dense-grid c4' },
       ...dg('Address', denseInput('property.address')),
       ...dg('Parcel Number', denseInput('property.apn')),
       ...dg('City', denseInput('property.city')),
