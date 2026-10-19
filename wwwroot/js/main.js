@@ -31,6 +31,22 @@ function toast(msg, isError = false) {
 
 function renderTopBar() {
   const bar = document.getElementById('topbar');
+  const d = state.data;
+  const tbDateGroup = (label, path) => {
+    const [parent, key] = path.split('.');
+    const input = el('input', { class: 'tb-d-input', type: 'date' });
+    input.value = d[parent][key] || '';
+    input.addEventListener('change', () => {
+      d[parent][key] = input.value;
+      state.dirty = true;
+      renderReport();
+      refreshTopBar();
+    });
+    return el('div', { class: 'tb-d-group' },
+      el('div', { class: 'tb-d-label' }, label),
+      input,
+    );
+  };
   bar.replaceChildren(
     el('div', { class: 'tb-left' },
       el('img', { class: 'tb-seal', src: state.tenant.sealUrl || '/img/seal.png', alt: '' }),
@@ -38,6 +54,10 @@ function renderTopBar() {
         el('div', { class: 'tb-county' }, state.tenant.countyName || 'County of Riverside'),
         el('div', { class: 'tb-office' }, state.tenant.officeName || 'Appraisal Workbench'),
       ),
+    ),
+    el('div', { class: 'tb-dates' },
+      tbDateGroup('Effective Date', 'property.effectiveDate'),
+      tbDateGroup('Report Date', 'property.reportDate'),
     ),
     el('div', { class: 'tb-center' },
       el('div', { class: 'tb-headline' },
@@ -198,22 +218,7 @@ function apnSearchBox() {
 }
 
 function controlBar() {
-  const d = state.data;
-  const dateField = (label, path) => {
-    const [parent, key] = path.split('.');
-    const input = el('input', { class: 'cb-date', type: 'date' });
-    input.value = d[parent][key] || '';
-    input.addEventListener('change', () => {
-      d[parent][key] = input.value;
-      state.dirty = true;
-      renderReport();
-      refreshTopBar();
-    });
-    return el('div', { class: 'cb-item' }, el('span', { class: 'cb-label' }, label), input);
-  };
   return el('div', { class: 'control-bar' },
-    dateField('Effective Date', 'property.effectiveDate'),
-    dateField('Report Date', 'property.reportDate'),
     apnSearchBox(),
   );
 }

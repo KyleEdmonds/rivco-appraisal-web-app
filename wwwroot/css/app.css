@@ -57,6 +57,22 @@ input, select, textarea { font-family: inherit; }
 .tb-title { display: flex; flex-direction: column; line-height: 1.2; white-space: nowrap; }
 .tb-county { font-size: 20px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--gold-light); }
 .tb-office { font-size: 26px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #fff; }
+/* top-bar date fields (stacked, styled like the PDF masthead dates) */
+.tb-dates { display: flex; flex-direction: column; gap: 4px; flex: 0 0 auto; }
+.tb-d-group { display: flex; flex-direction: column; gap: 1px; }
+.tb-d-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--gold-light); }
+.tb-d-input {
+  background: transparent;
+  border: 1px solid var(--navy-light);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  padding: 2px 6px;
+  border-radius: 0;
+  color-scheme: dark;
+  min-width: 140px;
+}
 .tb-center { display: flex; align-items: center; gap: 32px; }
 .tb-headline { text-align: right; line-height: 1.2; min-width: 0; }
 .tb-headline .addr { font-size: 24px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 640px; }
