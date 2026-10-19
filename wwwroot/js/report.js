@@ -29,7 +29,7 @@ function sheet(page, total, content) {
   return el('div', { class: 'sheet' },
     el('div', { class: 'sheet-masthead' },
       el('div', { class: 'brand' },
-        el('img', { class: 'seal', src: t.sealUrl || '/img/seal.svg', alt: '' }),
+        el('img', { class: 'seal', src: t.sealUrl || '/img/seal.png', alt: '' }),
         el('div', {},
           el('div', { class: 'report-title' }, 'Appraisal Report'),
           brand ? el('div', { class: 'brand-line' }, brand) : null,

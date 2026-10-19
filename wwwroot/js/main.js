@@ -33,7 +33,7 @@ function renderTopBar() {
   const bar = document.getElementById('topbar');
   bar.replaceChildren(
     el('div', { class: 'tb-left' },
-      el('img', { class: 'tb-seal', src: state.tenant.sealUrl || '/img/seal.svg', alt: '' }),
+      el('img', { class: 'tb-seal', src: state.tenant.sealUrl || '/img/seal.png', alt: '' }),
       el('div', { class: 'tb-title' }, 'Appraisal Workflows'),
     ),
     el('div', { class: 'tb-center' },
