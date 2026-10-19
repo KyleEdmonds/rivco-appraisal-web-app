@@ -1,0 +1,285 @@
+// ---------------------------------------------------------------------------
+// main.js — bootstrap: top bar, list view, split-pane appraisal view
+// Left pane: control bar (dates + APN search) + tabbed form
+// Right pane: report staging. Draggable split handle between them.
+// ---------------------------------------------------------------------------
+import { api, state, saveCurrent, loadAppraisal, newAppraisal, fmtCurrency, fmtDate, computeAppraisal } from './core.js';
+import { renderForm, setTab } from './form.js';
+import { renderReport, exportPDF, fitSheets } from './report.js';
+
+function el(tag, attrs = {}, ...children) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === 'class') node.className = v;
+    else if (k.startsWith('on') && typeof v === 'function') node.addEventListener(k.slice(2), v);
+    else if (v !== null && v !== undefined) node.setAttribute(k, v);
+  }
+  for (const c of children.flat()) {
+    if (c === null || c === undefined || c === false) continue;
+    node.append(c.nodeType ? c : document.createTextNode(String(c)));
+  }
+  return node;
+}
+
+function toast(msg, isError = false) {
+  const t = el('div', { class: `toast ${isError ? 'error' : ''}` }, msg);
+  document.body.append(t);
+  setTimeout(() => t.remove(), 3000);
+}
+
+// --- top bar -----------------------------------------------------------------
+
+function renderTopBar() {
+  const bar = document.getElementById('topbar');
+  bar.replaceChildren(
+    el('div', { class: 'tb-left' },
+      el('img', { class: 'tb-seal', src: state.tenant.sealUrl || '/img/seal.svg', alt: '' }),
+      el('div', { class: 'tb-title' }, 'Appraisal Workflows'),
+    ),
+    el('div', { class: 'tb-center' },
+      el('div', { class: 'tb-headline' },
+        el('div', { class: 'addr', id: 'tb-addr' }, '—'),
+        el('div', { class: 'sub', id: 'tb-sub' }, ''),
+      ),
+      el('div', { class: 'tb-divider' }),
+      el('div', { class: 'tb-value' },
+        el('div', { class: 'label' }, 'Total Assessed'),
+        el('div', { class: 'num', id: 'tb-value' }, '—'),
+      ),
+    ),
+    el('div', { class: 'tb-actions' },
+      el('button', { class: 'btn', id: 'btn-list' }, 'List'),
+      el('button', { class: 'btn', id: 'btn-new' }, '+ New'),
+      el('button', { class: 'btn primary', id: 'btn-save' }, state.dirty ? 'Save ●' : 'Save'),
+      el('button', { class: 'btn', id: 'btn-pdf' }, 'PDF'),
+    ),
+  );
+  document.getElementById('btn-list').onclick = showList;
+  document.getElementById('btn-new').onclick = () => { newAppraisal(); showAppraisal(); };
+  document.getElementById('btn-save').onclick = onSave;
+  document.getElementById('btn-pdf').onclick = async () => {
+    try { await exportPDF(); } catch (e) { toast(`PDF failed: ${e.message}`, true); }
+  };
+}
+
+// Keep the top-bar headline + total assessed in sync with the form.
+export function refreshTopBar() {
+  const d = state.data;
+  const addr = document.getElementById('tb-addr');
+  const sub = document.getElementById('tb-sub');
+  const val = document.getElementById('tb-value');
+  if (addr) addr.textContent = d.property.address || d.property.apn || '—';
+  if (sub) sub.textContent = [d.property.city, d.property.apn].filter(Boolean).join(' · ');
+  if (val) val.textContent = fmtCurrency(computeAppraisal(d).totalAssessed);
+}
+
+async function onSave() {
+  try {
+    await saveCurrent();
+    renderTopBar();
+    toast('Saved');
+  } catch (e) {
+    toast(`Save failed: ${e.message}`, true);
+  }
+}
+
+// --- list view ----------------------------------------------------------------
+
+async function showList() {
+  const main = document.getElementById('main');
+  main.replaceChildren(el('div', { class: 'list-empty' }, 'Loading…'));
+  let rows;
+  try {
+    rows = await api.listAppraisals();
+  } catch (e) {
+    main.replaceChildren(el('div', { class: 'list-empty' }, `Failed to load: ${e.message}`));
+    return;
+  }
+  main.replaceChildren(
+    el('div', { class: 'list-view' },
+      el('div', { class: 'list-head' },
+        el('h2', {}, 'Appraisals'),
+        el('button', { class: 'btn primary', onclick: () => { newAppraisal(); showAppraisal(); } }, '+ New Appraisal'),
+      ),
+      el('table', { class: 'list-table' },
+        el('thead', {}, el('tr', {}, ['APN', 'Address', 'City', 'Report Date', 'Final Value', 'Updated', ''].map((h) => el('th', {}, h)))),
+        el('tbody', {},
+          rows.length === 0
+            ? el('tr', {}, el('td', { colspan: 7 }, 'No appraisals yet.'))
+            : rows.map((r) => el('tr', { class: 'clickable', onclick: () => openById(r.id) },
+                el('td', {}, r.apn || '—'),
+                el('td', {}, r.address || '—'),
+                el('td', {}, r.city || '—'),
+                el('td', {}, r.reportDate ? fmtDate(r.reportDate) : '—'),
+                el('td', { class: 'num' }, r.finalValue != null ? fmtCurrency(r.finalValue) : '—'),
+                el('td', {}, r.updatedAt ? new Date(r.updatedAt).toLocaleDateString() : '—'),
+                el('td', {}, el('button', {
+                  class: 'btn tiny danger',
+                  onclick: (e) => {
+                    e.stopPropagation();
+                    if (!confirm('Delete this appraisal?')) return;
+                    api.deleteAppraisal(r.id).then(() => showList()).catch((err) => toast(err.message, true));
+                  },
+                }, 'Delete')),
+              )),
+        ),
+      ),
+    ),
+  );
+}
+
+
+async function openById(id) {
+  try {
+    await loadAppraisal(id);
+    showAppraisal();
+  } catch (e) {
+    toast(`Open failed: ${e.message}`, true);
+  }
+}
+
+// --- appraisal view: split pane with drag slider -------------------------------
+
+let apnInput = '';
+let apnSugg = [];
+let apnTimer = null;
+
+function apnSearchBox() {
+  const box = el('div', { class: 'apn-box' });
+  const input = el('input', { placeholder: 'Search APN or address…' });
+  input.value = apnInput;
+  const count = el('span', { class: 'apn-count' }, '');
+  const sugg = el('div', { class: 'sugg', style: 'display:none' });
+
+  const renderSugg = () => {
+    if (apnSugg.length === 0) { sugg.style.display = 'none'; sugg.replaceChildren(); return; }
+    sugg.style.display = 'block';
+    sugg.replaceChildren(apnSugg.map((r) => el('button', {
+      onclick: () => {
+        apnInput = r.apn || '';
+        input.value = apnInput;
+        apnSugg = [];
+        sugg.style.display = 'none';
+        openById(r.id);
+      },
+    },
+      el('span', { class: 's-apn' }, r.apn || '—'),
+      el('span', { class: 's-addr' }, r.address || ''),
+    )));
+  };
+
+  input.addEventListener('input', () => {
+    apnInput = input.value;
+    clearTimeout(apnTimer);
+    const q = apnInput.trim();
+    if (q.length < 1) { apnSugg = []; renderSugg(); return; }
+    apnTimer = setTimeout(async () => {
+      try {
+        const rows = await api.listAppraisals();
+        const lq = q.toLowerCase();
+        apnSugg = rows
+          .filter((r) => String(r.apn || '').toLowerCase().includes(lq) || String(r.address || '').toLowerCase().includes(lq))
+          .slice(0, 20);
+      } catch { apnSugg = []; }
+      renderSugg();
+    }, 150);
+  });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { apnSugg = []; renderSugg(); }
+  });
+  document.addEventListener('click', (e) => {
+    if (!box.contains(e.target)) { apnSugg = []; renderSugg(); }
+  });
+  box.append(input, count, sugg);
+  return box;
+}
+
+function controlBar() {
+  const d = state.data;
+  const dateField = (label, path) => {
+    const [parent, key] = path.split('.');
+    const input = el('input', { class: 'cb-date', type: 'date' });
+    input.value = d[parent][key] || '';
+    input.addEventListener('change', () => {
+      d[parent][key] = input.value;
+      state.dirty = true;
+      renderReport();
+      refreshTopBar();
+    });
+    return el('div', { class: 'cb-item' }, el('span', { class: 'cb-label' }, label), input);
+  };
+  return el('div', { class: 'control-bar' },
+    dateField('Effective Date', 'property.effectiveDate'),
+    dateField('Report Date', 'property.reportDate'),
+    apnSearchBox(),
+  );
+}
+
+function showAppraisal() {
+  const main = document.getElementById('main');
+  const left = el('div', { class: 'pane pane-left' },
+    controlBar(),
+    el('div', { id: 'form-root', class: 'form-root', style: 'flex:1 1 auto;min-height:0;display:flex;flex-direction:column' }),
+  );
+  const handle = el('div', { class: 'split-handle' });
+  const right = el('div', { class: 'pane pane-right' }, el('div', { id: 'report-root', class: 'report-root', style: 'flex:1 1 auto;min-height:0;display:flex;flex-direction:column' }));
+  const split = el('div', { class: 'split' }, left, handle, right);
+  main.replaceChildren(split);
+
+  // Drag slider
+  handle.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = left.getBoundingClientRect().width;
+    const move = (ev) => {
+      const w = Math.min(Math.max(startW + (ev.clientX - startX), 320), window.innerWidth - 480);
+      left.style.width = `${w}px`;
+      left.style.flex = '0 0 auto';
+      fitSheets();
+    };
+    const up = () => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  });
+
+  renderForm();
+  renderReport();
+  refreshTopBar();
+}
+
+// --- boot ----------------------------------------------------------------------
+
+async function boot() {
+  try {
+    state.tenant = await api.getTenant();
+  } catch { /* neutral tenant */ }
+  renderTopBar();
+  if (new URLSearchParams(location.search).get('open') === '1') {
+    const rows = await api.listAppraisals();
+    if (rows.length > 0) {
+      const tab = new URLSearchParams(location.search).get('tab');
+      if (tab) setTab(tab);
+      openById(rows[0].id);
+      return;
+    }
+  }
+  showList();
+}
+
+// Form edits update the top-bar headline + total assessed.
+window.addEventListener('appraisal:changed', refreshTopBar);
+
+// Warn on unload with unsaved changes.
+window.addEventListener('beforeunload', (e) => {
+  if (state.dirty) { e.preventDefault(); e.returnValue = ''; }
+});
+
+// Re-fit report sheets when the window resizes.
+window.addEventListener('resize', () => {
+  if (document.getElementById('report-root')) fitSheets();
+});
+
+boot();
