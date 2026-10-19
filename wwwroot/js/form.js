@@ -315,16 +315,14 @@ function subjectTab() {
       dgCell('Quality', denseInput('improvements.primary.quality')),
       dgCell('Condition', denseSelect('improvements.primary.condition', CONDITION_OPTIONS)),
     ]),
-    psGroup('Land / Site', [
+    psGroup('Land', [
       dgCell('Site Area (Acres)', denseNum('land.acres')),
       dgCell('Site Area (SF)', denseNum('land.siteAreaSqFt')),
       dgCell('Zoning', denseInput('land.zoning')),
       dgCell('Frontage (ft)', denseNum('land.frontageFt')),
-    ]),
-    psGroup('Land Value', [
       dgCell('Land Value ($)', denseNum('land.landValue')),
       dgCell('Land Value Method', denseInput('land.landValueMethod')),
-    ], areaField('Land Value Notes', 'land.landValueNotes', 2)),
+    ]),
   );
 
   // Outbuildings
