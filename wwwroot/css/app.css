@@ -58,7 +58,7 @@ input, select, textarea { font-family: inherit; }
 .tb-county { font-size: 20px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--gold-light); }
 .tb-office { font-size: 26px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #fff; }
 /* top-bar date fields (side by side, styled like the PDF masthead dates) */
-.tb-dates { display: flex; flex-direction: row; gap: 12px; flex: 0 0 auto; align-items: flex-start; }
+.tb-dates { display: flex; flex-direction: row; gap: 12px; flex: 0 0 auto; align-items: flex-start; margin-left: -16px; }
 .tb-d-group { display: flex; flex-direction: column; gap: 1px; }
 .tb-d-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--gold-light); }
 .tb-d-input {
@@ -74,7 +74,7 @@ input, select, textarea { font-family: inherit; }
   min-width: 140px;
 }
 /* top-bar APN search (right of the date fields) */
-.tb-apn { flex: 0 0 auto; }
+.tb-apn { flex: 0 0 auto; display: flex; flex-direction: column; gap: 1px; }
 .tb-apn .apn-box {
   height: 28px;
   border: 1px solid var(--navy-light);
