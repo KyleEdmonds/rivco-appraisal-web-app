@@ -45,27 +45,27 @@ input, select, textarea { font-family: inherit; }
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 48px;
-  padding: 0 12px;
+  height: 96px;
+  padding: 0 24px;
   background: var(--navy);
-  border-bottom: 12px solid var(--teal);
+  border-bottom: 24px solid var(--teal);
   color: #fff;
   flex: 0 0 auto;
 }
-.tb-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.tb-seal { width: 36px; height: 36px; flex: 0 0 auto; }
+.tb-left { display: flex; align-items: center; gap: 20px; min-width: 0; }
+.tb-seal { width: 72px; height: 72px; flex: 0 0 auto; }
 .tb-title { display: flex; flex-direction: column; line-height: 1.2; white-space: nowrap; }
-.tb-county { font-size: 12px; font-weight: 500; color: var(--gold-light); }
-.tb-office { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #fff; }
-.tb-center { display: flex; align-items: center; gap: 16px; }
+.tb-county { font-size: 24px; font-weight: 500; color: var(--gold-light); }
+.tb-office { font-size: 26px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #fff; }
+.tb-center { display: flex; align-items: center; gap: 32px; }
 .tb-headline { text-align: right; line-height: 1.2; min-width: 0; }
-.tb-headline .addr { font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 320px; }
-.tb-headline .sub { font-size: 10px; color: #94a3b8; white-space: nowrap; }
-.tb-divider { width: 1px; height: 32px; background: var(--navy-light); }
+.tb-headline .addr { font-size: 24px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 640px; }
+.tb-headline .sub { font-size: 20px; color: #94a3b8; white-space: nowrap; }
+.tb-divider { width: 1px; height: 64px; background: var(--navy-light); }
 .tb-value { text-align: right; line-height: 1.2; }
-.tb-value .label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--gold-light); font-weight: 700; }
-.tb-value .num { font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; }
-.tb-actions { display: flex; align-items: center; gap: 6px; }
+.tb-value .label { font-size: 20px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--gold-light); font-weight: 700; }
+.tb-value .num { font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.tb-actions { display: flex; align-items: center; gap: 12px; }
 
 /* --- buttons --- */
 .btn {
@@ -96,6 +96,9 @@ input, select, textarea { font-family: inherit; }
   background: transparent;
   border-color: transparent;
   color: var(--gold-light);
+  height: 56px;
+  font-size: 24px;
+  padding: 10px 24px;
 }
 .tb-actions .btn:hover { background: var(--navy-dark); color: #fff; }
 .tb-actions .btn.primary { background: var(--gold); border-color: var(--gold); color: var(--navy-dark); }
