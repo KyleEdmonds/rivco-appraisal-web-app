@@ -835,11 +835,11 @@ textarea.inp { height: auto; padding: 4px 6px; resize: vertical; line-height: 1.
 }
 .img-box > header span { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.12em; }
 .img-box .img-body { flex: 1; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
-.img-box .img-preview { width: 100%; max-height: 160px; object-fit: cover; border: 1px solid var(--border-soft); }
+.img-box .img-preview { width: 100%; flex: 1; min-height: 0; object-fit: cover; border: 1px solid var(--border-soft); }
 .img-box .img-actions { display: flex; gap: 6px; align-items: center; }
 .img-box .img-actions input[type="file"] { font-size: 10px; }
 .img-box .img-empty { flex: 1; display: flex; align-items: center; justify-content: center; border: 1px dashed var(--border-soft); color: var(--muted-2); font-size: 10px; min-height: 60px; }
-.img-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.img-row { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr; gap: 12px; flex: 1 1 auto; min-height: 120px; }
 
 /* outbuilding rows */
 .ob-row { border: 1px solid var(--border-soft); padding: 8px; margin-bottom: 8px; display: flex; flex-direction: column; gap: 8px; }
