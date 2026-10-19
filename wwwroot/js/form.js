@@ -294,9 +294,9 @@ function subjectTab() {
     refreshComputed();
   };
 
-  const summary = section('Property & Land Summary', null,
+  const summary = section('Property Summary', null,
     el('button', { class: 'btn sm', onclick: addOutbuilding }, '+ Add Outbuilding'),
-    el('div', { class: 'dense-grid' },
+    el('div', { class: 'dense-grid c2' },
       ...dg('Address', denseInput('property.address')),
       ...dg('Parcel Number', denseInput('property.apn')),
       ...dg('City', denseInput('property.city')),
