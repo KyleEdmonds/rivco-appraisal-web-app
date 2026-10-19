@@ -6,7 +6,7 @@ Web app for preparing and managing commercial real estate appraisals.
 
 ## Run
 
-Requires the [.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0).
+Requires the [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0).
 
 1. Clone the repo.
 2. Run `start.bat` (Windows) or `dotnet run`.
@@ -25,7 +25,7 @@ First run creates `data/appraisal.db` (SQLite). No data ships with the repo.
 
 | Path | Purpose |
 |------|---------|
-| `AppraisalWeb.csproj` | .NET 9 project |
+| `AppraisalWeb.csproj` | .NET 10 project |
 | `Program.cs` | Backend (API + SQLite) |
 | `start.bat` | Launcher |
 | `wwwroot/` | Frontend (HTML, CSS, JS, PDF libs, images) |
