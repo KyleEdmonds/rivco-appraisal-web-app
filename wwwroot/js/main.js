@@ -257,16 +257,17 @@ async function boot() {
     state.tenant = await api.getTenant();
   } catch { /* neutral tenant */ }
   renderTopBar();
-  if (new URLSearchParams(location.search).get('open') === '1') {
-    const rows = await api.listAppraisals();
-    if (rows.length > 0) {
-      const tab = new URLSearchParams(location.search).get('tab');
-      if (tab) setTab(tab);
-      openById(rows[0].id);
-      return;
-    }
-  }
-  showList();
+  const params = new URLSearchParams(location.search);
+  if (params.get('view') === 'list') { showList(); return; }
+  const tab = params.get('tab');
+  if (tab) setTab(tab);
+  // Landing page is the appraisal workspace: open the most recent appraisal,
+  // or a blank new one if none exist.
+  let rows = [];
+  try { rows = await api.listAppraisals(); } catch { /* offline data */ }
+  if (rows.length > 0) { openById(rows[0].id); return; }
+  newAppraisal();
+  showAppraisal();
 }
 
 // Form edits update the top-bar headline + total assessed.
