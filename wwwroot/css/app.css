@@ -57,8 +57,8 @@ input, select, textarea { font-family: inherit; }
 .tb-title { display: flex; flex-direction: column; line-height: 1.2; white-space: nowrap; }
 .tb-county { font-size: 20px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--gold-light); }
 .tb-office { font-size: 26px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #fff; }
-/* top-bar date fields (stacked, styled like the PDF masthead dates) */
-.tb-dates { display: flex; flex-direction: column; gap: 4px; flex: 0 0 auto; }
+/* top-bar date fields (side by side, styled like the PDF masthead dates) */
+.tb-dates { display: flex; flex-direction: row; gap: 12px; flex: 0 0 auto; align-items: flex-start; }
 .tb-d-group { display: flex; flex-direction: column; gap: 1px; }
 .tb-d-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--gold-light); }
 .tb-d-input {
@@ -73,7 +73,19 @@ input, select, textarea { font-family: inherit; }
   color-scheme: dark;
   min-width: 140px;
 }
-.tb-center { display: flex; align-items: center; gap: 32px; }
+/* top-bar APN search (right of the date fields) */
+.tb-apn { flex: 0 0 auto; }
+.tb-apn .apn-box {
+  height: 28px;
+  border: 1px solid var(--navy-light);
+  background: transparent;
+  min-width: 180px;
+  flex: 0 0 auto;
+}
+.tb-apn .apn-box input { color: #fff; font-size: 13px; }
+.tb-apn .apn-box input::placeholder { color: #94a3b8; }
+.tb-apn .apn-count { color: #cbd5e1; border-left-color: var(--navy-light); }
+.tb-center { display: flex; align-items: center; gap: 32px; min-width: 0; }
 .tb-headline { text-align: right; line-height: 1.2; min-width: 0; }
 .tb-headline .addr { font-size: 24px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 640px; }
 .tb-headline .sub { font-size: 20px; color: #94a3b8; white-space: nowrap; }

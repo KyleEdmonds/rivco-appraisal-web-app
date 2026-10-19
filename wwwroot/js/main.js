@@ -59,6 +59,7 @@ function renderTopBar() {
       tbDateGroup('Effective Date', 'property.effectiveDate'),
       tbDateGroup('Report Date', 'property.reportDate'),
     ),
+    el('div', { class: 'tb-apn' }, apnSearchBox()),
     el('div', { class: 'tb-center' },
       el('div', { class: 'tb-headline' },
         el('div', { class: 'addr', id: 'tb-addr' }, '—'),
@@ -217,12 +218,6 @@ function apnSearchBox() {
   return box;
 }
 
-function controlBar() {
-  return el('div', { class: 'control-bar' },
-    apnSearchBox(),
-  );
-}
-
 // Right-pane staging toolbar (matches the original Report Preview bar).
 function stagingToolbar() {
   const pct = el('span', { class: 'zoom-pct' }, '100%');
@@ -269,7 +264,6 @@ async function onFinalize() {
 function showAppraisal() {
   const main = document.getElementById('main');
   const left = el('div', { class: 'pane pane-left' },
-    controlBar(),
     el('div', { id: 'form-root', class: 'form-root', style: 'flex:1 1 auto;min-height:0;display:flex;flex-direction:column' }),
   );
   const handle = el('div', { class: 'split-handle' });
