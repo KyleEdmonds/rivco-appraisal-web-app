@@ -275,7 +275,7 @@ function subjectTab() {
   const imp = d.improvements.primary;
   const { outbuildings } = d.improvements;
 
-  const dg = (label, node) => [el('span', { class: 'dg-label' }, label), node];
+  const dgCell = (label, node) => el('div', { class: 'dg-cell' }, el('span', { class: 'dg-cell-label' }, label), node);
 
   // Property Summary — combined site + building characteristics (dense grid)
   const addOutbuilding = () => {
@@ -296,23 +296,23 @@ function subjectTab() {
 
   const summary = section('Property Summary', null,
     el('button', { class: 'btn sm', onclick: addOutbuilding }, '+ Add Outbuilding'),
-    el('div', { class: 'dense-grid c4' },
-      ...dg('Address', denseInput('property.address')),
-      ...dg('Parcel Number', denseInput('property.apn')),
-      ...dg('City', denseInput('property.city')),
-      ...dg('Property Type', denseSelect('improvements.primary.type', TYPE_OPTIONS)),
-      ...dg('Building Area (SF)', denseNum('improvements.primary.grossFloorArea')),
-      ...dg('Leasable Area (SF)', denseNum('improvements.primary.nla')),
-      ...dg('Year Built', denseNum('improvements.primary.yearBuilt')),
-      ...dg('Effective Age', el('input', { class: 'inp', readonly: true, 'data-calc': 'effAge', 'data-fmt': 'num' })),
-      ...dg('Quality', denseInput('improvements.primary.quality')),
-      ...dg('Condition', denseSelect('improvements.primary.condition', CONDITION_OPTIONS)),
-      ...dg('Site Area (Acres)', denseNum('land.acres')),
-      ...dg('Site Area (SF)', denseNum('land.siteAreaSqFt')),
-      ...dg('Zoning', denseInput('land.zoning')),
-      ...dg('Frontage (ft)', denseNum('land.frontageFt')),
-      ...dg('Land Value ($)', denseNum('land.landValue')),
-      ...dg('Land Value Method', denseInput('land.landValueMethod')),
+    el('div', { class: 'dg-stack' },
+      dgCell('Address', denseInput('property.address')),
+      dgCell('Parcel Number', denseInput('property.apn')),
+      dgCell('City', denseInput('property.city')),
+      dgCell('Property Type', denseSelect('improvements.primary.type', TYPE_OPTIONS)),
+      dgCell('Building Area (SF)', denseNum('improvements.primary.grossFloorArea')),
+      dgCell('Leasable Area (SF)', denseNum('improvements.primary.nla')),
+      dgCell('Year Built', denseNum('improvements.primary.yearBuilt')),
+      dgCell('Effective Age', el('input', { class: 'inp', readonly: true, 'data-calc': 'effAge', 'data-fmt': 'num' })),
+      dgCell('Quality', denseInput('improvements.primary.quality')),
+      dgCell('Condition', denseSelect('improvements.primary.condition', CONDITION_OPTIONS)),
+      dgCell('Site Area (Acres)', denseNum('land.acres')),
+      dgCell('Site Area (SF)', denseNum('land.siteAreaSqFt')),
+      dgCell('Zoning', denseInput('land.zoning')),
+      dgCell('Frontage (ft)', denseNum('land.frontageFt')),
+      dgCell('Land Value ($)', denseNum('land.landValue')),
+      dgCell('Land Value Method', denseInput('land.landValueMethod')),
     ),
     areaField('Land Value Notes', 'land.landValueNotes', 2),
   );
