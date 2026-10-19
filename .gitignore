@@ -1,4 +1,6 @@
 bin/
 obj/
 *.log
-
+_edgeprof/
+share/
+*.zip

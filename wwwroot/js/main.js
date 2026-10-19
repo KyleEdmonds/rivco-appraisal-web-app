@@ -4,7 +4,7 @@
 // Right pane: report staging. Draggable split handle between them.
 // ---------------------------------------------------------------------------
 import { api, state, saveCurrent, loadAppraisal, newAppraisal, fmtCurrency, fmtDate, computeAppraisal } from './core.js';
-import { renderForm, setTab } from './form.js';
+import { renderForm, setTab, loadRepo } from './form.js';
 import { renderReport, exportPDF, fitSheets, zoomBy, zoomFit } from './report.js';
 
 function el(tag, attrs = {}, ...children) {
@@ -230,12 +230,32 @@ function stagingToolbar() {
       el('span', { class: 'st-meta' }, '— sheets · 8.5×11'),
     ),
     el('div', { class: 'st-right' },
+      el('button', { class: 'st-btn finalize', title: 'Save this appraisal and archive it as a permanent sales comp', onclick: onFinalize }, '✓ Finalize & Save to Archive'),
       btn('−', 'Zoom out', () => zoomBy(-0.1)),
       pct,
       btn('+', 'Zoom in', () => zoomBy(0.1)),
       btn('Fit', 'Fit to width', zoomFit),
     ),
   );
+}
+
+// Finalize: save the appraisal, then archive it as a permanent sales comp
+// (server-side). Every finalized appraisal becomes exactly one permanent comp;
+// re-finalizing identical content is deduplicated.
+async function onFinalize() {
+  if (!confirm('Finalize this appraisal?\n\nIt will be saved and archived as a permanent sales comp, available to all future appraisals.')) return;
+  try {
+    const id = await saveCurrent();
+    const res = await api.finalize(id, state.data);
+    if (res.deduplicated) {
+      toast('Already archived — identical content (duplicate).');
+    } else {
+      toast(`Finalized — permanent comp archived (${String(res.contentHash).slice(0, 8)}… · ${res.compCount} total).`);
+    }
+    loadRepo();
+  } catch (e) {
+    toast(`Finalize failed: ${e.message}`, true);
+  }
 }
 
 function showAppraisal() {

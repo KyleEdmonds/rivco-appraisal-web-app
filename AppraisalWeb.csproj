@@ -10,4 +10,11 @@
     <PackageReference Include="Microsoft.Data.Sqlite" Version="9.0.0" />
   </ItemGroup>
 
+  <!-- share/ is a distribution copy for IT, not source. Keep it out of the build. -->
+  <ItemGroup>
+    <Compile Remove="share\**" />
+    <Content Remove="share\**" />
+    <None Remove="share\**" />
+  </ItemGroup>
+
 </Project>

@@ -263,8 +263,8 @@ export const api = {
   createAppraisal: (data) => req('/api/appraisals', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ data }) }),
   updateAppraisal: (id, data) => req(`/api/appraisals/${id}`, json({ data })),
   deleteAppraisal: (id) => req(`/api/appraisals/${id}`, { method: 'DELETE' }),
-  getComps: () => req('/api/comps'),
-  saveComps: (data) => req('/api/comps', json(data)),
+  finalize: (appraisalId, data) => req('/api/finalize', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ appraisalId, data }) }),
+  getPermanentComps: () => req('/api/permanent-comps'),
   getTenant: () => req('/api/tenant'),
   saveTenant: (data) => req('/api/tenant', json(data)),
 };
@@ -302,5 +302,127 @@ export function newAppraisal() {
   state.id = null;
   state.data = createEmptyParcel('');
   state.dirty = false;
+}
+
+// --- local (machine-only) comp store -----------------------------------------
+// CSV-imported comps live in localStorage: they exist only on this machine,
+// in this browser. Permanent comps (finalized appraisals) live server-side.
+// ---------------------------------------------------------------------------
+
+const LOCAL_COMPS_KEY = 'rivco.localComps';
+
+export function getLocalComps() {
+  try {
+    const raw = localStorage.getItem(LOCAL_COMPS_KEY);
+    const list = raw ? JSON.parse(raw) : [];
+    return Array.isArray(list) ? list : [];
+  } catch { return []; }
+}
+
+export function setLocalComps(list) {
+  localStorage.setItem(LOCAL_COMPS_KEY, JSON.stringify(list));
+}
+
+export function clearLocalComps() {
+  localStorage.removeItem(LOCAL_COMPS_KEY);
+}
+
+// Minimal CSV parse: quoted fields, escaped quotes (""), CRLF/LF, BOM.
+export function parseCsv(text) {
+  const src = String(text).replace(/^\uFEFF/, '');
+  const rows = [];
+  let row = [], field = '', inQuotes = false;
+  for (let i = 0; i < src.length; i++) {
+    const ch = src[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (src[i + 1] === '"') { field += '"'; i++; }
+        else inQuotes = false;
+      } else field += ch;
+    } else if (ch === '"') inQuotes = true;
+    else if (ch === ',') { row.push(field); field = ''; }
+    else if (ch === '\n' || ch === '\r') {
+      if (ch === '\r' && src[i + 1] === '\n') i++;
+      row.push(field); field = '';
+      if (row.length > 1 || row[0].trim() !== '') rows.push(row);
+      row = [];
+    } else field += ch;
+  }
+  if (field !== '' || row.length > 0) { row.push(field); rows.push(row); }
+  return rows;
+}
+
+// Header aliases (lowercase) → CompRecord field.
+const CSV_FIELD_MAP = {
+  apn: ['apn', 'parcel', 'parcel#', 'parcel number', 'apn#'],
+  address: ['address', 'street', 'street address', 'location'],
+  city: ['city'],
+  saleDate: ['saledate', 'sale date', 'transfer date', 'date', 'recorded date'],
+  price: ['price', 'sale price', 'saleprice', 'cash eq sale price', 'cash equivalent sale price', 'amount'],
+  age: ['age'],
+  quality: ['quality'],
+  condition: ['condition'],
+  landArea: ['landarea', 'land area', 'acres', 'land (acres)'],
+  buildingArea: ['buildingarea', 'building area', 'building sf', 'gross floor area', 'gfa', 'sf', 'area'],
+  clearHeight: ['clearheight', 'clear height'],
+  zoning: ['zoning'],
+  propertyType: ['propertytype', 'property type', 'type'],
+  isArmsLength: ['isarmslength', 'arms length', 'arms-length'],
+};
+const CSV_NUM_FIELDS = ['price', 'age', 'landArea', 'buildingArea', 'clearHeight', ...ADJ_FIELDS];
+
+function csvRowToComp(header, row) {
+  const get = (names) => {
+    for (const n of names) {
+      const idx = header.indexOf(n);
+      if (idx >= 0 && row[idx] !== undefined && String(row[idx]).trim() !== '') return String(row[idx]).trim();
+    }
+    return '';
+  };
+  const apn = get(CSV_FIELD_MAP.apn);
+  if (!apn) return null;
+  const rec = {
+    apn,
+    address: get(CSV_FIELD_MAP.address),
+    city: get(CSV_FIELD_MAP.city),
+    saleDate: get(CSV_FIELD_MAP.saleDate),
+    quality: get(CSV_FIELD_MAP.quality),
+    condition: get(CSV_FIELD_MAP.condition),
+    zoning: get(CSV_FIELD_MAP.zoning),
+    propertyType: get(CSV_FIELD_MAP.propertyType),
+    isArmsLength: true,
+    sourceReport: '',
+    subjectApn: '',
+    photoUrl: '',
+  };
+  for (const f of CSV_NUM_FIELDS) {
+    const n = parseFloat(get(CSV_FIELD_MAP[f] ?? [f.toLowerCase()]));
+    rec[f] = Number.isFinite(n) ? n : 0;
+  }
+  const arms = get(CSV_FIELD_MAP.isArmsLength).toLowerCase();
+  rec.isArmsLength = !(arms === 'false' || arms === '0' || arms === 'ind' || arms === 'ind.');
+  return rec;
+}
+
+// Parse CSV text and merge into the machine-local comp store.
+// Dedup key: APN + saleDate (against existing local comps and within the file).
+export function importLocalComps(csvText) {
+  const rows = parseCsv(csvText);
+  if (rows.length < 2) return { added: 0, skipped: 0 };
+  const header = rows[0].map((h) => String(h).trim().toLowerCase());
+  const existing = getLocalComps();
+  const seen = new Set(existing.map((r) => `${r.apn}|${r.saleDate}`));
+  let added = 0, skipped = 0;
+  for (const row of rows.slice(1)) {
+    const rec = csvRowToComp(header, row);
+    if (!rec) { skipped++; continue; }
+    const key = `${rec.apn}|${rec.saleDate}`;
+    if (seen.has(key)) { skipped++; continue; }
+    seen.add(key);
+    existing.push(rec);
+    added++;
+  }
+  setLocalComps(existing);
+  return { added, skipped };
 }
 

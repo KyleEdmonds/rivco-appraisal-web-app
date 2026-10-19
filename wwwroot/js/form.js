@@ -5,6 +5,7 @@
 import {
   state, markDirty, computeAppraisal, hasCostData,
   fmtCurrency, fmtCurrencyRounded, fmtNumber, fmtPct, api,
+  getLocalComps, clearLocalComps, importLocalComps,
 } from './core.js';
 import { renderReport } from './report.js';
 
@@ -417,14 +418,26 @@ function removeComp(id) {
 }
 
 // repository state (module-level so it survives re-renders)
+// Two sources, merged:
+//   - permanent: finalized appraisals, server-side (shared across machines)
+//   - local:     CSV-imported comps, machine-local (browser localStorage)
 let repoRecords = [];
 let repoQuery = '';
 
+function repoToast(msg, isError = false) {
+  const t = el('div', { class: `toast ${isError ? 'error' : ''}` }, msg);
+  document.body.append(t);
+  setTimeout(() => t.remove(), 3500);
+}
+
 async function loadRepo() {
-  try {
-    const data = await api.getComps();
-    repoRecords = Array.isArray(data?.comparables) ? data.comparables : [];
-  } catch { repoRecords = []; }
+  let perm = [];
+  try { perm = await api.getPermanentComps(); } catch { perm = []; }
+  const local = getLocalComps();
+  repoRecords = [
+    ...(Array.isArray(perm) ? perm : []).map((r) => ({ ...r, origin: 'permanent' })),
+    ...local.map((r) => ({ ...r, origin: 'local' })),
+  ];
   renderRepoResults();
 }
 
@@ -437,13 +450,17 @@ function renderRepoResults() {
     .slice(0, 50);
   if (rows.length === 0) {
     box.replaceChildren(el('div', { class: 'repo-empty' },
-      repoRecords.length === 0 ? 'No comps in the repository.' : 'No matches.'));
+      repoRecords.length === 0
+        ? 'No comps in the repository. Finalize an appraisal to archive a permanent comp, or import a CSV.'
+        : 'No matches.'));
     return;
   }
   box.replaceChildren(el('table', {},
-    el('thead', {}, el('tr', {}, ['APN', 'Address', 'Sale Date', 'Price', 'Bldg SF', ''].map((h) => el('th', {}, h)))),
+    el('thead', {}, el('tr', {}, ['APN', 'Src', 'Address', 'Sale Date', 'Price', 'Bldg SF', ''].map((h) => el('th', {}, h)))),
     el('tbody', {}, rows.map((r) => el('tr', {},
       el('td', {}, r.apn || '—'),
+      el('td', {}, el('span', { class: `repo-src ${r.origin === 'permanent' ? 'perm' : 'local'}` },
+        r.origin === 'permanent' ? 'Perm' : 'Local')),
       el('td', {}, r.address || '—'),
       el('td', {}, r.saleDate || '—'),
       el('td', { class: 'num' }, r.price > 0 ? fmtCurrency(r.price) : '—'),
@@ -464,6 +481,29 @@ function renderRepoResults() {
       }, '+ Add')),
     ))),
   ));
+}
+
+// CSV import (machine-local only) + clear local comps.
+async function onRepoCsvFile(e) {
+  const file = e.target.files?.[0];
+  e.target.value = '';
+  if (!file) return;
+  try {
+    const { added, skipped } = importLocalComps(await file.text());
+    repoToast(`Imported ${added} local comp${added === 1 ? '' : 's'}${skipped ? ` · ${skipped} skipped` : ''} (this machine only).`);
+    loadRepo();
+  } catch (err) {
+    repoToast(`CSV import failed: ${err.message}`, true);
+  }
+}
+
+function onClearLocalComps() {
+  const n = getLocalComps().length;
+  if (n === 0) { repoToast('No local comps to clear.'); return; }
+  if (!confirm(`Remove ${n} CSV-imported local comp${n === 1 ? '' : 's'} from this machine? Permanent comps are not affected.`)) return;
+  clearLocalComps();
+  repoToast('Local comps cleared.');
+  loadRepo();
 }
 
 // sales comparison grid (SalesGrid.tsx)
@@ -646,9 +686,10 @@ function salesTab() {
   const s = d.sales;
 
   // Section heading + toolbar + repository panel
+  const permCount = repoRecords.filter((r) => r.origin === 'permanent').length;
   const repo = section('Sales Comparison', null,
     el('span', { class: 'desc', style: 'color:#94a3b8' },
-      `${s.comparables.length} of ${repoRecords.length} comps`),
+      `${s.comparables.length} of ${repoRecords.length} comps · ${permCount} permanent`),
     el('button', { class: 'btn sm dark-ghost', onclick: () => { loadRepo(); } }, '⟳ Reload'),
     el('div', { class: 'repo-panel', style: 'border:0' },
       el('div', { class: 'repo-search' },
@@ -665,6 +706,9 @@ function salesTab() {
           renderForm();
           refreshComputed();
         } }, '+ Manual Comp'),
+        el('button', { class: 'btn sm', title: 'Import comps from a CSV file (stored on this machine only)', onclick: () => document.getElementById('repo-csv-input')?.click() }, '⬆ Import CSV'),
+        el('button', { class: 'btn sm dark-ghost', title: 'Remove CSV-imported comps from this machine', onclick: onClearLocalComps }, 'Clear Local'),
+        el('input', { type: 'file', accept: '.csv,text/csv', id: 'repo-csv-input', style: 'display:none', onchange: onRepoCsvFile }),
       ),
       el('div', { class: 'repo-results', id: 'repo-results' }),
     ),
@@ -866,3 +910,4 @@ export function renderForm() {
 }
 
 export function setTab(t) { activeTab = t; }
+export { loadRepo };

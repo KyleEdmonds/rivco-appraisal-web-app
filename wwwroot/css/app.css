@@ -623,6 +623,27 @@ textarea.inp { height: auto; padding: 4px 6px; resize: vertical; line-height: 1.
   white-space: nowrap;
 }
 .st-btn:hover { background: var(--navy-dark); color: #fff; }
+.st-btn.finalize {
+  border-color: var(--gold);
+  background: var(--gold);
+  color: var(--navy-dark);
+  font-weight: 700;
+}
+.st-btn.finalize:hover { background: var(--gold-light); color: var(--navy-dark); }
+
+/* comp repository source badges: Perm = server-side (finalized appraisals),
+   Local = CSV-imported, machine-local only */
+.repo-src {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0 4px;
+  border: 1px solid;
+  white-space: nowrap;
+}
+.repo-src.perm { color: var(--gold); border-color: var(--gold); }
+.repo-src.local { color: #64748b; border-color: #94a3b8; }
 .sheet-scale { overflow: hidden; flex: 0 0 auto; }
 .sheet-zoom { transform-origin: top left; }
 
