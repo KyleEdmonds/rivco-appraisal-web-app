@@ -93,24 +93,74 @@ function compRow(c) {
 function coverSheet(d, comp) {
   const t = state.tenant;
   const p = d.property;
-  return el('div', { class: 'cover' },
-    el('div', { class: 'cover-county' }, t.countyName || t.county || '—'),
-    el('div', { class: 'cover-office' }, t.officeName || 'Office of the Assessor'),
-    el('div', { class: 'cover-value' }, fmtCurrencyRounded(comp.totalAssessed)),
-    el('div', { class: 'cover-value-label' }, 'Total Assessed Value'),
-    kv([
-      ['Property', p.address],
-      ['APN', p.apn],
-      ['City', p.city],
-      ['Legal Description', p.legalDescription],
-      ['Effective Date', fmtDate(p.effectiveDate)],
-      ['Report Date', fmtDate(p.reportDate)],
-      ['Appraiser', p.appraiser],
-      ['License', p.appraiserLicense],
-      ['Purpose', p.purpose],
-      ['Client', p.client],
-    ]),
+  const l = d.land;
+  const { primary, outbuildings } = d.improvements;
+  const totalGfa = (primary.grossFloorArea || 0) + outbuildings.reduce((s, o) => s + (o.grossFloorArea || 0), 0);
+  const landAcres = l.acres > 0 ? l.acres : (l.siteAreaSqFt / 43560);
+
+  // Property Characteristics
+  const chars = el('div', { class: 'cs-section' },
+    el('div', { class: 'cs-heading' }, 'Property Characteristics'),
+    el('div', { class: 'cs-addr' }, [p.address, p.city, p.zip].filter(Boolean).join(', ') || '—'),
+    p.apn ? el('div', { class: 'cs-apn' }, `APN: ${p.apn}`) : null,
+    el('div', { class: 'cs-meta' },
+      el('span', {}, `Site: ${l.siteAreaSqFt > 0 ? `${fmtNumber(l.siteAreaSqFt)} sq ft (${landAcres.toFixed(2)} ac)` : '—'}`),
+      l.zoning ? el('span', {}, `Zoning: ${l.zoning}`) : null,
+      el('span', {}, `Building: ${totalGfa > 0 ? `${fmtNumber(totalGfa)} sq ft` : '—'}`),
+      el('span', {}, `Year Built: ${primary.yearBuilt || '—'}`),
+    ),
   );
+
+  // 2x2 image grid
+  const imgCell = (src, label) => src
+    ? el('img', { src, alt: label })
+    : el('div', { class: 'no-img' }, `No ${label.toLowerCase()} available.`);
+  const images = el('div', { class: 'cover-images' },
+    imgCell(p.mapImageUrl, 'map'),
+    imgCell(p.subjectPhotoUrl, 'image'),
+    imgCell(p.subjectPhotoUrl2, 'image'),
+    imgCell(p.subjectPhotoUrl3, 'image'),
+  );
+
+  // Summary of Value
+  const valBox = (label, val) => el('div', { class: 'cs-val-box' },
+    el('div', { class: 'cs-val-label' }, label),
+    el('div', { class: 'cs-val-num' }, fmtCurrencyRounded(val)),
+  );
+  const costBox = d.cost.includeInReport ? valBox('Cost', comp.cost.valueByCost) : null;
+  const summary = el('div', { class: 'cs-section' },
+    el('div', { class: 'cs-heading' }, 'Summary of Value'),
+    el('div', { class: `cs-val-grid${costBox ? ' c3' : ' c2'}` },
+      valBox('Sales', comp.sales.valueBySales),
+      valBox('Income', comp.income.valueByIncome),
+      costBox,
+    ),
+    el('div', { class: 'cs-callout' },
+      el('div', { class: 'cs-callout-left' },
+        el('div', { class: 'cs-callout-label' }, 'Final Reconciled Market Value'),
+        el('div', { class: 'cs-callout-sub' }, `As of ${fmtDate(p.effectiveDate)}`),
+      ),
+      el('div', { class: 'cs-callout-val' }, fmtCurrencyRounded(d.reconciliation.finalValue || comp.reconciliation.weightedValue)),
+    ),
+  );
+
+  // Certification
+  const cert = el('div', { class: 'cs-section cs-cert' },
+    el('div', { class: 'cs-heading' }, 'Certification'),
+    d.reconciliation.rationale ? el('p', { class: 'cs-rationale' }, d.reconciliation.rationale) : null,
+    el('div', { class: 'cs-sig' },
+      el('div', {},
+        el('div', { class: 'cs-sig-line' }),
+        el('div', { class: 'cs-sig-label' }, `${p.appraiser || '—'} · ${p.appraiserLicense || ''}`),
+      ),
+      el('div', {},
+        el('div', { class: 'cs-sig-line' }),
+        el('div', { class: 'cs-sig-label' }, 'Date'),
+      ),
+    ),
+  );
+
+  return el('div', { class: 'cover' }, chars, images, summary, cert);
 }
 
 function salesSheet(d, comp) {

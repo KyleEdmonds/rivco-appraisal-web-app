@@ -299,8 +299,7 @@ function subjectTab() {
     refreshComputed();
   };
 
-  const summary = section('Property Summary', null,
-    el('button', { class: 'btn sm', onclick: addOutbuilding }, '+ Add Outbuilding'),
+  const summary = section('Property Summary', null, null,
     psGroup('Property', [
       dgCell('Address', denseInput('property.address')),
       dgCell('Parcel Number', denseInput('property.apn')),
@@ -320,8 +319,6 @@ function subjectTab() {
       dgCell('Site Area (SF)', denseNum('land.siteAreaSqFt')),
       dgCell('Zoning', denseInput('land.zoning')),
       dgCell('Frontage (ft)', denseNum('land.frontageFt')),
-      dgCell('Land Value ($)', denseNum('land.landValue')),
-      dgCell('Land Value Method', denseInput('land.landValueMethod')),
     ]),
   );
 
