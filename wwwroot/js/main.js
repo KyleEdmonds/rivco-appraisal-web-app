@@ -79,9 +79,11 @@ function renderTopBar() {
       el('button', { class: 'btn', id: 'btn-new' }, '+ New'),
       el('button', { class: 'btn primary', id: 'btn-save' }, state.dirty ? 'Save ●' : 'Save'),
       el('button', { class: 'btn', id: 'btn-pdf' }, 'PDF'),
+      el('button', { class: 'btn', id: 'btn-rule2', title: 'Rule 2 batch evaluation over the county transfer file' }, 'Rule 2'),
     ),
   );
   document.getElementById('btn-list').onclick = showList;
+  document.getElementById('btn-rule2').onclick = showRule2;
   document.getElementById('btn-new').onclick = () => { newAppraisal(); showAppraisal(); };
   document.getElementById('btn-save').onclick = onSave;
   document.getElementById('btn-pdf').onclick = async () => {
@@ -155,6 +157,93 @@ async function showList() {
   );
 }
 
+
+// --- Rule 2 batch view ---------------------------------------------------------
+// Screens the county transfer file (input/) for commercial classes and
+// archives auto-enrolled sales to the transfer comp repository.
+
+const R2_BUCKETS = [
+  ['auto_enrolled', 'Auto-Enrolled', 'price corroborated by same-class peers — enroll at sale price'],
+  ['borderline', 'Borderline', 'closest peer within 15% — review'],
+  ['below_market', 'Below Market', 'presumption rebutted — sold below peer average'],
+  ['above_market', 'Above Market', 'presumption rebutted — sold above peer average'],
+  ['land_review', 'Land Review', 'land gate failed (2% / 2 peers) — mass appraisal queue'],
+  ['no_value', 'No-Value', 'zero consideration — classified by transfer type (LocalRatioCd)'],
+];
+
+async function showRule2() {
+  const main = document.getElementById('main');
+  main.replaceChildren(el('div', { class: 'list-empty' }, 'Loading…'));
+  let status;
+  try { status = await api.rule2Status(); }
+  catch (e) {
+    main.replaceChildren(el('div', { class: 'list-empty' }, `Failed to load: ${e.message}`));
+    return;
+  }
+  const file = (status.files || [])[0];
+  const last = status.lastRun;
+  main.replaceChildren(
+    el('div', { class: 'rule2-view' },
+      el('div', { class: 'list-head' },
+        el('h2', {}, 'Rule 2 Batch Evaluation'),
+        el('span', { class: 'r2-sub' }, 'Commercial classes · Rule 2(b) full cash value screen'),
+        el('button', { class: 'btn primary', id: 'r2-run' }, '▶ Run Batch'),
+      ),
+      el('div', { class: 'r2-input' },
+        file
+          ? el('div', {},
+              el('b', {}, file.name),
+              el('span', {}, ` · ${(file.size / 1048576).toFixed(1)} MB · modified ${new Date(file.lastWrite).toLocaleString()}`),
+            )
+          : el('div', { class: 'r2-none' }, 'No transfer file in input/ — drop the county .xlsx or .csv there and reload.'),
+      ),
+      last ? renderR2Summary(last.summary) : el('div', { class: 'r2-none' }, 'No batch run yet.'),
+      el('div', { class: 'r2-comps' },
+        `Transfer comp repository: ${status.transferCompCount} auto-enrolled sales (permanent, server-side, read-only)`),
+    ),
+  );
+  document.getElementById('r2-run').onclick = onRule2Run;
+}
+
+function renderR2Summary(s) {
+  // The stored run summary is serialized by the server with PascalCase keys
+  // (SourceFile, TotalRows, …) while the run endpoint emits camelCase. Read
+  // both so any stored run renders, and coerce numbers NaN-safely.
+  const pick = (camel, pascal) => (s[camel] ?? s[pascal]);
+  const buckets = s.buckets ?? s.Buckets ?? {};
+  const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
+  const rows = R2_BUCKETS.map(([key, label, desc]) =>
+    el('tr', {},
+      el('td', {}, el('span', { class: `r2-badge ${key}` }, label)),
+      el('td', { class: 'num' }, String(buckets[key] ?? 0)),
+      el('td', { class: 'r2-desc' }, desc),
+      el('td', {}, el('a', { class: 'btn tiny', href: `/api/rule2/buckets/${key}` }, '⬇ CSV')),
+    ));
+  return el('div', { class: 'r2-summary' },
+    el('div', { class: 'r2-meta' },
+      `Source: ${pick('sourceFile', 'SourceFile') || '—'} · ${num(pick('totalRows', 'TotalRows')).toLocaleString()} rows · ${num(pick('commercialRows', 'CommercialRows')).toLocaleString()} commercial · ${num(pick('marketSales', 'MarketSales')).toLocaleString()} market sales · ${num(pick('noValue', 'NoValue')).toLocaleString()} no-value`),
+    el('table', { class: 'list-table' },
+      el('thead', {}, el('tr', {}, ['Bucket', 'Count', 'Meaning', ''].map((h) => el('th', {}, h)))),
+      el('tbody', {}, rows),
+    ),
+  );
+}
+
+async function onRule2Run() {
+  if (!confirm('Run the Rule 2 batch over the county transfer file?\n\nAuto-enrolled commercial sales will be archived to the transfer comp repository (duplicates are skipped).')) return;
+  const btn = document.getElementById('r2-run');
+  btn.disabled = true;
+  btn.textContent = 'Running…';
+  try {
+    const res = await api.rule2Run();
+    toast(`Rule 2 complete in ${(res.durationMs / 1000).toFixed(1)}s — ${res.summary.buckets.auto_enrolled} auto-enrolled · ${res.inserted} new comps · ${res.deduplicated} duplicates skipped.`);
+    showRule2();
+  } catch (e) {
+    toast(`Rule 2 run failed: ${e.message}`, true);
+    btn.disabled = false;
+    btn.textContent = '▶ Run Batch';
+  }
+}
 
 async function openById(id) {
   try {

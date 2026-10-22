@@ -197,6 +197,8 @@ export function createEmptyParcel(apn) {
       intersection: '', legalDescription: '', effectiveDate: '2025-01-01',
       reportDate: todayISO(), appraiser: '', appraiserLicense: '', reportType: '',
       purpose: '', client: '',
+      transferDocumentNumber: '', ratioCode: '', salePrice: 0,
+      appraiserId: '', section: '', appraiserNotes: '',
     },
     land: {
       siteAreaSqFt: 0, acres: 0, zoning: '', topography: '', shape: '',
@@ -265,6 +267,9 @@ export const api = {
   deleteAppraisal: (id) => req(`/api/appraisals/${id}`, { method: 'DELETE' }),
   finalize: (appraisalId, data) => req('/api/finalize', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ appraisalId, data }) }),
   getPermanentComps: () => req('/api/permanent-comps'),
+  getTransferComps: () => req('/api/transfer-comps'),
+  rule2Status: () => req('/api/rule2/status'),
+  rule2Run: () => req('/api/rule2/run', { method: 'POST' }),
   getTenant: () => req('/api/tenant'),
   saveTenant: (data) => req('/api/tenant', json(data)),
 };

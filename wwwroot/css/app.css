@@ -712,6 +712,7 @@ textarea.inp { height: auto; padding: 4px 6px; resize: vertical; line-height: 1.
 .st-btn.finalize:hover { background: var(--gold-light); color: var(--navy-dark); }
 
 /* comp repository source badges: Perm = server-side (finalized appraisals),
+   Trans = server-side (Rule 2 auto-enrolled transfers, read-only),
    Local = CSV-imported, machine-local only */
 .repo-src {
   font-size: 9px;
@@ -723,6 +724,7 @@ textarea.inp { height: auto; padding: 4px 6px; resize: vertical; line-height: 1.
   white-space: nowrap;
 }
 .repo-src.perm { color: var(--gold); border-color: var(--gold); }
+.repo-src.transfer { color: #0e7490; border-color: #22d3ee; }
 .repo-src.local { color: #64748b; border-color: #94a3b8; }
 .sheet-scale { overflow: hidden; flex: 0 0 auto; }
 .sheet-zoom { transform-origin: top left; }
@@ -1013,3 +1015,35 @@ textarea.inp { height: auto; padding: 4px 6px; resize: vertical; line-height: 1.
 .list-table .btn.tiny { padding: 2px 8px; font-size: 10px; }
 .list-table .btn.danger { color: #b91c1c; border-color: #fca5a5; }
 .list-table .btn.danger:hover { background: #fef2f2; }
+
+/* --- Rule 2 batch view -------------------------------------------------------- */
+.rule2-view { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.rule2-view .list-head { margin-bottom: 0; }
+.r2-sub { font-size: 11px; color: var(--muted-2); margin-left: 10px; }
+.r2-input {
+  border: 1px solid var(--border-soft);
+  background: var(--bg-soft);
+  padding: 8px 10px;
+  font-size: 11px;
+}
+.r2-input b { font-size: 12px; }
+.r2-none { padding: 10px; font-size: 11px; color: var(--muted-2); text-align: center; border: 1px dashed var(--border-soft); }
+.r2-summary { display: flex; flex-direction: column; gap: 6px; }
+.r2-meta { font-size: 11px; color: var(--muted); }
+.r2-desc { color: var(--muted-2); font-size: 10px; }
+.r2-comps { font-size: 11px; color: var(--muted); border-top: 1px solid var(--border-soft); padding-top: 8px; }
+.r2-badge {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px 6px;
+  border: 1px solid;
+  white-space: nowrap;
+}
+.r2-badge.auto_enrolled { color: #15803d; border-color: #4ade80; }
+.r2-badge.borderline { color: #b45309; border-color: #fbbf24; }
+.r2-badge.below_market { color: #b91c1c; border-color: #fca5a5; }
+.r2-badge.above_market { color: #1d4ed8; border-color: #93c5fd; }
+.r2-badge.land_review { color: #6d28d9; border-color: #c4b5fd; }
+.r2-badge.no_value { color: #64748b; border-color: #94a3b8; }

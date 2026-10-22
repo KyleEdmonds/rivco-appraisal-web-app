@@ -1,6 +1,7 @@
 using Microsoft.Data.Sqlite;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using RivCo;
 
 var builder = WebApplication.CreateBuilder(args);
 var app = builder.Build();
@@ -46,9 +47,35 @@ using (var conn = new SqliteConnection(connStr))
             data TEXT NOT NULL,
             updated_at TEXT
         );
-        -- The old server-side CSV comp repository is retired: only permanent
-        -- comps (finalized appraisals) may exist server-side. CSV-imported
-        -- comps are machine-local (browser localStorage).
+        -- Two separate server-side comp stores, never cross-written:
+        --   permanent_comps  — finalized appraisals (written by /api/finalize)
+        --   transfer_comps   — Rule 2 auto-enrolled transfers (written by the
+        --                      Rule 2 batch only; read-only, no delete endpoint)
+        -- Both are permanent sale comps, served together to the UI repository.
+        -- CSV-imported comps remain machine-local (browser localStorage).
+        CREATE TABLE IF NOT EXISTS transfer_comps (
+            id TEXT PRIMARY KEY,
+            apn TEXT,
+            price REAL,
+            sale_date TEXT,
+            class_cd TEXT,
+            class_cat TEXT,
+            class_descr TEXT,
+            ratio_cd TEXT,
+            price_per_unit REAL,
+            content_hash TEXT,
+            source_file TEXT,
+            data TEXT NOT NULL,
+            created_at TEXT
+        );
+        CREATE TABLE IF NOT EXISTS rule2_runs (
+            id TEXT PRIMARY KEY,
+            source_file TEXT,
+            ran_at TEXT,
+            summary TEXT NOT NULL,
+            buckets TEXT NOT NULL,
+            created_at TEXT
+        );
         DROP TABLE IF EXISTS comps;
         """;
     cmd.ExecuteNonQuery();
@@ -164,12 +191,10 @@ app.MapDelete("/api/appraisals/{id}", (string id) =>
 
 
 // ---------------------------------------------------------------------------
-// Comp repository (single document)
-// ---------------------------------------------------------------------------
-// ---------------------------------------------------------------------------
 // Permanent comps — finalized appraisals archived as permanent sales comps.
-// This is the ONLY comp data that lives server-side. CSV-imported comps are
-// machine-local (browser localStorage) and never reach the server.
+// One of two server-side comp stores (the other is transfer_comps, written
+// by the Rule 2 batch — see Rule2.cs). CSV-imported comps are machine-local
+// (browser localStorage) and never reach the server.
 // ---------------------------------------------------------------------------
 app.MapGet("/api/permanent-comps", () =>
 {
@@ -267,6 +292,12 @@ app.MapPut("/api/tenant", async (HttpContext ctx) =>
     cmd.ExecuteNonQuery();
     return Results.Ok(new { saved = true });
 });
+
+// ---------------------------------------------------------------------------
+// Rule 2 batch evaluation (county transfer file -> screened buckets +
+// auto-enrolled transfer comps). See Rule2.cs.
+// ---------------------------------------------------------------------------
+Rule2.Map(app, Open, app.Environment.ContentRootPath);
 
 // ---------------------------------------------------------------------------
 // Static files (the vanilla JS frontend)

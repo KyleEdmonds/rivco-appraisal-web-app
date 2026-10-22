@@ -322,6 +322,19 @@ function subjectTab() {
     ]),
   );
 
+  const transfer = section('Transfer Details', 'Transfer-specific information shown on the report', null,
+    el('div', { class: 'field-grid c3' },
+      textField('Transfer Document #', 'property.transferDocumentNumber', { placeholder: 'e.g. 2026-SR00015' }),
+      textField('Ratio Code', 'property.ratioCode', { placeholder: 'e.g. STT' }),
+      numField('Sale Price', 'property.salePrice', { prefix: '$' }),
+    ),
+    el('div', { class: 'field-grid c3' },
+      textField('Appraiser ID', 'property.appraiserId', { placeholder: 'e.g. 677' }),
+      textField('Section', 'property.section', { placeholder: 'e.g. Riverside Commercial' }),
+    ),
+    areaField('Appraiser Notes', 'property.appraiserNotes', 3),
+  );
+
   // Outbuildings
   const obSection = outbuildings.length > 0
     ? section('Outbuildings', null, null,
@@ -362,7 +375,7 @@ function subjectTab() {
     imgBox('Property Image 3', 'property.subjectPhotoUrl3'),
   );
 
-  return [summary, obSection, images, images2];
+  return [summary, transfer, obSection, images, images2];
 }
 
 // --- Sales tab (SalesTab + SalesGrid + CompForm) -------------------------------
@@ -415,8 +428,9 @@ function removeComp(id) {
 }
 
 // repository state (module-level so it survives re-renders)
-// Two sources, merged:
+// Three sources, merged:
 //   - permanent: finalized appraisals, server-side (shared across machines)
+//   - transfer:  Rule 2 auto-enrolled transfers, server-side (read-only)
 //   - local:     CSV-imported comps, machine-local (browser localStorage)
 let repoRecords = [];
 let repoQuery = '';
@@ -428,11 +442,13 @@ function repoToast(msg, isError = false) {
 }
 
 async function loadRepo() {
-  let perm = [];
+  let perm = [], trans = [];
   try { perm = await api.getPermanentComps(); } catch { perm = []; }
+  try { trans = await api.getTransferComps(); } catch { trans = []; }
   const local = getLocalComps();
   repoRecords = [
     ...(Array.isArray(perm) ? perm : []).map((r) => ({ ...r, origin: 'permanent' })),
+    ...(Array.isArray(trans) ? trans : []).map((r) => ({ ...r, origin: 'transfer' })),
     ...local.map((r) => ({ ...r, origin: 'local' })),
   ];
   renderRepoResults();
@@ -456,8 +472,8 @@ function renderRepoResults() {
     el('thead', {}, el('tr', {}, ['APN', 'Src', 'Address', 'Sale Date', 'Price', 'Bldg SF', ''].map((h) => el('th', {}, h)))),
     el('tbody', {}, rows.map((r) => el('tr', {},
       el('td', {}, r.apn || '—'),
-      el('td', {}, el('span', { class: `repo-src ${r.origin === 'permanent' ? 'perm' : 'local'}` },
-        r.origin === 'permanent' ? 'Perm' : 'Local')),
+      el('td', {}, el('span', { class: `repo-src ${r.origin === 'permanent' ? 'perm' : r.origin === 'transfer' ? 'transfer' : 'local'}` },
+        r.origin === 'permanent' ? 'Perm' : r.origin === 'transfer' ? 'Trans' : 'Local')),
       el('td', {}, r.address || '—'),
       el('td', {}, r.saleDate || '—'),
       el('td', { class: 'num' }, r.price > 0 ? fmtCurrency(r.price) : '—'),
@@ -684,9 +700,10 @@ function salesTab() {
 
   // Section heading + toolbar + repository panel
   const permCount = repoRecords.filter((r) => r.origin === 'permanent').length;
+  const transCount = repoRecords.filter((r) => r.origin === 'transfer').length;
   const repo = section('Sales Comparison', null,
     el('span', { class: 'desc', style: 'color:#94a3b8' },
-      `${s.comparables.length} of ${repoRecords.length} comps · ${permCount} permanent`),
+      `${s.comparables.length} of ${repoRecords.length} comps · ${permCount} permanent · ${transCount} transfer`),
     el('button', { class: 'btn sm dark-ghost', onclick: () => { loadRepo(); } }, '⟳ Reload'),
     el('div', { class: 'repo-panel', style: 'border:0' },
       el('div', { class: 'repo-search' },

@@ -254,6 +254,98 @@ function reconciliationSheet(d, comp) {
 
 // --- render ------------------------------------------------------------------
 
+function subjectPropertySheet(d) {
+  const p = d.property;
+  const l = d.land;
+  const b = d.improvements.primary;
+  const gfa = b.grossFloorArea || 0;
+  const psf = gfa > 0 && p.salePrice > 0 ? p.salePrice / gfa : 0;
+  return [
+    heading('Subject Property'),
+    table(
+      ['Parcel', 'Eff. Date', 'Sale Price', 'Sq Ft', '$/Sq Ft', 'Location'],
+      [[
+        p.apn || '—',
+        fmtDate(p.effectiveDate),
+        fmtCurrency(p.salePrice),
+        gfa > 0 ? fmtNumber(gfa) : '—',
+        psf > 0 ? fmtCurrency(psf) : '—',
+        [p.address, p.city].filter(Boolean).join(', ') || '—',
+      ]],
+    ),
+    heading('Property Description'),
+    kv([
+      ['Address', [p.address, p.city, p.zip].filter(Boolean).join(', ')],
+      ['APN', p.apn],
+      ['Site Area', l.siteAreaSqFt > 0 ? `${fmtNumber(l.siteAreaSqFt)} SF` : ''],
+      ['Acres', l.acres > 0 ? String(l.acres) : ''],
+      ['Zoning', l.zoning],
+      ['Building Area', gfa > 0 ? `${fmtNumber(gfa)} SF` : ''],
+      ['Year Built', b.yearBuilt],
+      ['Quality', b.quality],
+      ['Condition', b.condition],
+    ]),
+  ];
+}
+
+function compDetailSheets(d) {
+  const comps = (d.sales.comparables || []).filter((c) => c.selected !== false);
+  if (comps.length === 0) return [];
+  return comps.map((c, i) => {
+    const unadjSF = c.buildingArea > 0 ? c.price / c.buildingArea : 0;
+    const net = ADJ_KEYS.reduce((s, f) => s + (Number(c[f]) || 0), 0);
+    const adjSF = unadjSF * (1 + net / 100);
+    const adjRows = ADJ_KEYS
+      .map((f) => [f.replace('adj', '').replace(/([A-Z])/g, ' $1').trim().toLowerCase().replace(/\b\w/g, (m) => m.toUpperCase()), Number(c[f]) || 0])
+      .filter(([, v]) => v !== 0);
+    return [
+      heading(`Comparable #${i + 1}`),
+      kv([
+        ['Parcel', c.parcel],
+        ['Address', [c.address, c.city].filter(Boolean).join(', ')],
+        ['Sale Date', fmtDate(c.saleDate)],
+        ['Sale Price', fmtCurrency(c.price)],
+        ['Age', c.age],
+        ['Quality', c.quality],
+        ['Condition', c.condition],
+        ['Land Area (Acres)', c.landArea > 0 ? String(c.landArea) : ''],
+        ['Building Area (SF)', c.buildingArea > 0 ? fmtNumber(c.buildingArea) : ''],
+        ['Land to Bldg. Ratio', c.landArea > 0 && c.buildingArea > 0 ? (c.buildingArea / c.landArea).toFixed(2) : ''],
+      ]),
+      heading('Adjustments'),
+      adjRows.length > 0
+        ? table(['Adjustment', 'Amount'], [...adjRows, ['Net Adjustment', net]])
+        : kv([['No adjustments', '—']]),
+      heading('Result'),
+      kv([
+        ['Unadjusted $/SF', unadjSF > 0 ? fmtCurrency(unadjSF) : '—'],
+        ['Net Adjustment', `${net > 0 ? '+' : ''}${net}%`],
+        ['Adjusted $/SF', adjSF > 0 ? fmtCurrency(adjSF) : '—'],
+      ]),
+    ];
+  });
+}
+
+function mapSheet(d) {
+  const p = d.property;
+  const comps = (d.sales.comparables || []).filter((c) => c.selected !== false);
+  const img = p.mapImageUrl
+    ? el('div', { class: 'img-cell' }, el('img', { src: p.mapImageUrl, alt: 'Map' }))
+    : el('div', { class: 'img-cell empty' }, el('div', { class: 'img-cap' }, 'No map'));
+  return [
+    heading('Map of Comparable Sales'),
+    img,
+    heading('Locations'),
+    table(
+      ['#', 'Parcel', 'Address'],
+      [
+        ['S', p.apn || '—', [p.address, p.city].filter(Boolean).join(', ') || '—'],
+        ...comps.map((c, i) => [String(i + 1), c.parcel || '—', [c.address, c.city].filter(Boolean).join(', ') || '—']),
+      ],
+    ),
+  ];
+}
+
 export function renderReport() {
   const root = document.getElementById('report-root');
   if (!root) return;
@@ -261,7 +353,10 @@ export function renderReport() {
   const comp = computeAppraisal(d);
   const contents = [
     coverSheet(d, comp),
+    subjectPropertySheet(d, comp),
     salesSheet(d, comp),
+    ...compDetailSheets(d, comp),
+    mapSheet(d, comp),
     incomeSheet(d, comp),
     ...(hasCostData(d) ? [costSheet(d, comp)] : []),
     reconciliationSheet(d, comp),
