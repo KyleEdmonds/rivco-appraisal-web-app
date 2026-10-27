@@ -3,9 +3,8 @@ bin/
 obj/
 *.log
 
-# Data & input
+# Data
 data/
-input/
 share/
 _edgeprof/
 *.zip
@@ -17,8 +16,10 @@ _*.txt
 _*.json
 _*.log
 
-# Generated output
-output/
+# Generated output (track Excel files only)
+output/*
+!output/*.xlsx
+!output/*.xlsm
 
 # Backups
 *.bak
