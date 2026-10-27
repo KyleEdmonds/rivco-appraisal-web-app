@@ -26,19 +26,19 @@ function reportTitle(d) {
   const caseType = d.property.caseType || 'transfer';
   if (caseType === 'appeal') return 'Property Appeal Valuation Report';
   if (caseType === 'stipulation') return 'Proposed Stipulation Valuation Report';
-  return 'Property Transfer Valuation Report';
+  return 'Transfer Valuation Report';
 }
 function sheet(page, total, content) {
   const p = state.data.property;
   const t = state.tenant;
-  const brand = [t.countyName, t.officeName].filter(Boolean).join(' · ');
+  const brand = `${t.countyName || 'County of Riverside'} - ${t.officeName || 'Office of the Assessor'}`;
   return el('div', { class: 'sheet' },
     el('div', { class: 'sheet-masthead' },
       el('div', { class: 'brand' },
         el('img', { class: 'seal', src: t.sealUrl || '/img/seal.png', alt: '' }),
         el('div', {},
           el('div', { class: 'report-title' }, reportTitle(state.data)),
-          brand ? el('div', { class: 'brand-line' }, brand) : null,
+          el('div', { class: 'brand-line' }, brand),
         ),
       ),
       el('div', { class: 'dates' },
@@ -105,48 +105,70 @@ function coverSheet(d, total) {
   return transferCover(d, total);
 }
 
-// Transfer: traditional formal cover — centered title + seal, prominent
-// address, two-column details table, centered photo, appraiser block.
+// Transfer cover: sectioned grid layout.
+//   Row 1: Property Identification | Transfer Details
+//   Row 2: Valuation Details (full width)
+//   Row 3: Appraiser Info | Appraiser Notes
 function transferCover(d, total) {
   const p = d.property;
-  const photo = p.subjectPhotoUrl || p.mapImageUrl;
-  const cell = (label, value) => el('div', { class: 'trc-cell' },
-    el('div', { class: 'trc-k' }, label),
-    el('div', { class: 'trc-v' }, value || '—'),
+  const field = (label, value) => el('div', { class: 'trc2-field' },
+    el('div', { class: 'trc2-k' }, label),
+    el('div', { class: 'trc2-v' }, value || '—'),
   );
-  // Use the standard sheet masthead + footer (like every other page) instead of
-  // a bespoke cover header; the county/office brand + seal + dates come from sheet().
+  const box = (title, body) => el('div', { class: 'trc2-box' },
+    el('header', {}, title),
+    el('div', { class: 'trc2-body' }, body),
+  );
+
+  const propertyId = box('Property Identification',
+    el('div', { class: 'trc2-fields' },
+      field('APN', p.apn),
+      field('Situs', p.address),
+      field('City', p.city),
+      field('Property Type', d.improvements.primary.type),
+    ),
+  );
+
+  const transferDetails = box('Transfer Details',
+    el('div', { class: 'trc2-fields' },
+      field('Date of Transfer', fmtDate(p.effectiveDate)),
+      field('Document Number', p.transferDocumentNumber),
+      field('Ratio Code', p.ratioCode),
+    ),
+  );
+
+  const valuation = box('Valuation Details',
+    el('div', { class: 'trc2-fields trc2-cols2' },
+      field('Sale Price', fmtCurrency(p.salePrice)),
+      field('Total Posted', fmtCurrency(d.cover.totalPosted)),
+    ),
+  );
+
+  const appraiserInfo = box('Appraiser Info',
+    el('div', { class: 'trc2-fields' },
+      field('Appraiser ID', p.appraiserId),
+      field('Section', p.section),
+    ),
+  );
+
+  const appraiserNotes = box('Appraiser Notes',
+    el('div', { class: 'trc2-notes' }, p.appraiserNotes || '—'),
+  );
+
+  const subjectPhoto = box('Subject Property Photo',
+    el('div', { class: 'trc2-photo' },
+      p.subjectPhotoUrl
+        ? el('img', { src: p.subjectPhotoUrl, alt: 'Subject property' })
+        : el('div', { class: 'trc2-photo-ph' }, 'No photo'),
+    ),
+  );
+
   return sheet(1, total,
-    el('div', { class: 'cover-inner trc-inner' },
-      el('div', { class: 'trc-address' },
-        el('div', { class: 'trc-addr-main' }, p.address || '—'),
-        el('div', { class: 'trc-addr-sub' }, [p.city, p.state, p.zip].filter(Boolean).join(', ')),
-      ),
-      el('div', { class: 'trc-details' },
-        cell('APN', p.apn),
-        cell('Property Type', d.improvements.primary.type),
-        cell('Date of Transfer', fmtDate(p.effectiveDate)),
-        cell('Transfer Document #', p.transferDocumentNumber),
-        cell('Ratio Code', p.ratioCode),
-        cell('City', p.city),
-        cell('Sale Price', fmtCurrency(p.salePrice)),
-        cell('Total Posted', fmtCurrency(d.cover.totalPosted)),
-      ),
-      el('div', { class: 'trc-photo' },
-        photo
-          ? el('img', { src: photo, alt: 'Subject property' })
-          : el('div', { class: 'trc-photo-ph' }, 'Subject Property Photo'),
-      ),
-      el('div', { class: 'trc-appraiser' },
-        el('div', { class: 'trc-appraiser-row' },
-          el('div', { class: 'trc-appraiser-name' }, p.appraiserName || '—'),
-          el('div', { class: 'trc-appraiser-meta' },
-            el('div', {}, p.appraiserId ? `Appraiser #${p.appraiserId}` : 'Appraiser'),
-            p.section ? el('div', {}, p.section) : null,
-          ),
-        ),
-        p.appraiserNotes ? el('div', { class: 'trc-notes' }, p.appraiserNotes) : null,
-      ),
+    el('div', { class: 'cover-inner trc2-inner' },
+      el('div', { class: 'trc2-row' }, propertyId, transferDetails),
+      el('div', { class: 'trc2-row' }, valuation),
+      el('div', { class: 'trc2-row' }, appraiserInfo, appraiserNotes),
+      el('div', { class: 'trc2-row' }, subjectPhoto),
     ),
   );
 }
