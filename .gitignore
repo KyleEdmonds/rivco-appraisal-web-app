@@ -1,0 +1,9 @@
+bin/
+obj/
+*.log
+_edgeprof/
+share/
+*.zip
+data/
+input/
+

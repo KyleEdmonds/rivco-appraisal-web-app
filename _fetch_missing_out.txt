@@ -1,0 +1,11 @@
+Input rows: 2258 | scope: ALL (missing only) | unique APNs: 681 | fetching: 681
+  progress: 100 / 681 (7s)
+  progress: 200 / 681 (13s)
+  progress: 300 / 681 (20s)
+  progress: 400 / 681 (27s)
+  progress: 500 / 681 (33s)
+  progress: 600 / 681 (39s)
+
+Wrote C:\RivCo_Appraisal_Web_App\output\commercial_transfers.csv (2258 rows, 17 cols)
+  fetched: 681 | found: 629 | with building SF: 338 | not found: 52
+  elapsed: 44s

@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Appraisal Workbench — County of Riverside · Commercial Valuation</title>
+  <link rel="stylesheet" href="/css/app.css" />
+</head>
+<body>
+  <div id="boot-error"></div>
+  <header id="topbar"></header>
+  <main id="main"></main>
+
+  <script>
+    // Global error capture + error boundary (ported from the reference app's
+    // index.html boot-error capture + ErrorBoundary). Installed before the
+    // module script so it catches boot-time and module-load failures. Any
+    // uncaught error or rejected promise surfaces a red banner with a Reload
+    // button instead of a blank screen.
+    (function () {
+      function show(msg) {
+        var b = document.getElementById('boot-error');
+        if (!b) return;
+        b.textContent = '';
+        b.appendChild(document.createTextNode('\u26A0 ' + (msg || 'An unexpected error occurred')));
+        var btn = document.createElement('button');
+        btn.textContent = 'Reload';
+        btn.onclick = function () { location.reload(); };
+        b.appendChild(btn);
+        b.style.display = 'flex';
+      }
+      window.addEventListener('error', function (e) { show(e.message); });
+      window.addEventListener('unhandledrejection', function (e) {
+        var r = e.reason;
+        show(r instanceof Error ? r.message : String(r || 'An unhandled promise rejection occurred'));
+      });
+    })();
+  </script>
+  <script src="/lib/html2canvas.min.js"></script>
+  <script src="/lib/jspdf.umd.min.js"></script>
+  <script type="module" src="/js/main.js"></script>
+</body>
+</html>

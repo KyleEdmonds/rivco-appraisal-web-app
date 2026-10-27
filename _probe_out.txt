@@ -1,0 +1,4 @@
+A. raw colon   (mv_Location:PIN)    | HTTP 200 | 620 ms | len 3715
+  RECORD: class= Fourplex | sf= 6,098 | addr= 64041 DILLON RD
+B. encoded     (mv_Location%3APIN)  | HTTP 200 | 358 ms | len 3715
+  RECORD: class= Fourplex | sf= 6,098 | addr= 64041 DILLON RD

@@ -1,0 +1,10 @@
+Status: 200 | Time: 625ms | Len: 3627
+Array length: 1
+Account: 119301026
+SquareFeet: 6,534
+acreage: 0.150
+class_code: Light Industrial
+address: 431 LEROY DR
+imprv count: 1
+  Building 1 -> Actual Area sqft: 6,621
+SUM Actual Area sqft: 6621
