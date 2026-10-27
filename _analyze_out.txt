@@ -1,7 +1,0 @@
-transfer_comps cols: ['id', 'apn', 'price', 'sale_date', 'class_cd', 'class_cat', 'class_descr', 'ratio_cd', 'price_per_unit', 'content_hash', 'source_file', 'data', 'created_at', 'address', 'city', 'quality', 'condition', 'year_built', 'building_sf', 'acreage', 'site_sqft']
-existing transfer_comp APN+doc keys: 2083
-overlap (2026 completed already in transfer_comps): 0
-2026 to add (not already present): 56
-duplicate books in mapping: []
-to-be-done distinct books: 73 covered: 73 uncovered: []
-per-appraiser (by book): {'Kyle Edmonds': 100, 'Jackie Strej': 23, 'Ryan Christianson': 36, 'Anthony Figuiera': 58, 'Sean Smith': 11, 'Jamie Javier': 23, 'Desiree Quesada': 51, 'Karina Heers': 7}

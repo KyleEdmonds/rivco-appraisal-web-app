@@ -1,5 +1,0 @@
-Input rows: 2258 | scope: priced only | unique APNs: 1429 | fetching: 20
-
-Wrote c:\rivco_appraisal_web_app\input\parcel_sizes.csv (20 rows)
-  found: 20 | with building SF: 13 | not found: 0
-  elapsed: 2s

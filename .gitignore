@@ -1,9 +1,25 @@
+# Build artifacts
 bin/
 obj/
 *.log
-_edgeprof/
-share/
-*.zip
+
+# Data & input
 data/
 input/
+share/
+_edgeprof/
+*.zip
+
+# Debug / scratch files
+_*.cjs
+_*.py
+_*.txt
+_*.json
+_*.log
+
+# Generated output
+output/
+
+# Backups
+*.bak
 
