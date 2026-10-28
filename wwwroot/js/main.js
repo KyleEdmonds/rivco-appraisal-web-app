@@ -686,8 +686,8 @@ async function showWorkQueue(type) {
 
 // Open a new appraisal pre-filled from a work-queue row. Maps the common
 // "to be worked" columns (PIN, DocNumber, DocDate, price, ratio, class,
-// address) onto the appraisal; the case type follows the queue (transfer vs
-// appeal).
+// address, characteristics) onto the appraisal; the case type follows the
+// queue (transfer vs appeal).
 function openFromWorkQueue(type, r) {
   const meta = WORK_QUEUE_META[type] || WORK_QUEUE_META.transfers;
   newAppraisal();
@@ -703,6 +703,19 @@ function openFromWorkQueue(type, r) {
   if (r.ClassCdDescr) d.improvements.primary.type = r.ClassCdDescr;
   if (r.Address) p.address = r.Address;
   if (r.City) p.city = r.City;
+  // Property characteristics (when the queue file carries the columns) into
+  // the Property Summary's Building / Land groups.
+  const b = d.improvements.primary;
+  if (r.YrBuilt) b.yearBuilt = Number(r.YrBuilt) || 0;
+  if (r.Quality) b.quality = r.Quality;
+  if (r.Condition) b.condition = r.Condition;
+  if (r.BuildingSf) {
+    b.grossFloorArea = Number(r.BuildingSf) || 0;
+    // Transfers carry no leasable area; default it to the building area.
+    if (!b.nla) b.nla = b.grossFloorArea;
+  }
+  if (r.Acreage) d.land.acres = Number(r.Acreage) || 0;
+  if (r.SquareFeet) d.land.siteAreaSqFt = Number(r.SquareFeet) || 0;
   state.dirty = true;
   addTab({ id: state.id, apn: p.apn, address: d.property.address, dirty: true });
   showAppraisal();
