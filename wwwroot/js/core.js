@@ -166,6 +166,31 @@ export function roundTo1000(n) { return Math.round(safe(n) / 1000) * 1000; }
 export function roundTo5000(n) { return Math.round(safe(n) / 5000) * 5000; }
 export function fmtCurrencyRounded(n) { return currencyFmt.format(roundTo1000(n)); }
 
+// Acres as a plain number with thousands separators (no unit suffix).
+export function fmtAcresNum(n, digits = 3) {
+  return safe(n).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: digits });
+}
+
+// Smart Title Case: converts an ALL-CAPS (or mostly-caps) string to Title
+// Case so raw county data ("363 AMERICAN CIR", "CORONA") reads naturally.
+// Already-mixed-case values ("Light Industrial", "2410 Wardlow RD") are left
+// untouched. Idempotent, so it's safe to apply at both ingestion and display.
+const SMALL_WORDS = new Set(['a', 'an', 'the', 'of', 'in', 'on', 'at', 'to', 'for', 'and', 'or', 'but', 'by', 'vs', 'per']);
+export function titleCase(s) {
+  if (s == null) return '';
+  const str = String(s).trim();
+  if (!str) return str;
+  const letters = str.replace(/[^A-Za-z]/g, '');
+  if (!letters) return str;
+  const upper = letters.replace(/[^A-Z]/g, '').length;
+  if (upper / letters.length < 0.5) return str; // already mixed / lower case
+  return str.split(/\s+/).map((w, i, arr) => {
+    if (!/[A-Za-z]/.test(w)) return w; // pure number / punctuation token
+    const isSmall = SMALL_WORDS.has(w.toLowerCase()) && i !== 0 && i !== arr.length - 1;
+    return isSmall ? w.toLowerCase() : w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+  }).join(' ');
+}
+
 export function todayISO() {
   const d = new Date();
   const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000);

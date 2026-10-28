@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------------------
 import {
   state, computeAppraisal, hasCostData, hasIncomeData,
-  fmtCurrency, fmtCurrencyRounded, fmtNumber, fmtPct, fmtDate, todayISO,
+  fmtCurrency, fmtCurrencyRounded, fmtNumber, fmtPct, fmtAcresNum, titleCase, fmtDate, todayISO,
   generateReconciliationNarrative,
 } from './core.js';
 
@@ -123,8 +123,8 @@ function transferCover(d, total) {
   const propertyId = box('Property Identification',
     el('div', { class: 'trc2-fields' },
       field('APN', p.apn),
-      field('Situs', p.address),
-      field('City', p.city),
+      field('Situs', titleCase(p.address)),
+      field('City', titleCase(p.city)),
       field('Property Type', d.improvements.primary.type),
     ),
   );
@@ -487,15 +487,15 @@ function subjectPropertySheet(d) {
         fmtCurrency(p.salePrice),
         gfa > 0 ? fmtNumber(gfa) : '—',
         psf > 0 ? fmtCurrency(psf) : '—',
-        [p.address, p.city].filter(Boolean).join(', ') || '—',
+        [titleCase(p.address), titleCase(p.city)].filter(Boolean).join(', ') || '—',
       ]],
     ),
     heading('Property Description'),
     kv([
-      ['Address', [p.address, p.city, p.zip].filter(Boolean).join(', ')],
+      ['Address', [titleCase(p.address), titleCase(p.city), p.zip].filter(Boolean).join(', ')],
       ['APN', p.apn],
       ['Site Area', l.siteAreaSqFt > 0 ? `${fmtNumber(l.siteAreaSqFt)} SF` : ''],
-      ['Acres', l.acres > 0 ? String(l.acres) : ''],
+      ['Acres', l.acres > 0 ? fmtAcresNum(l.acres) : ''],
       ['Zoning', l.zoning],
       ['Building Area', gfa > 0 ? `${fmtNumber(gfa)} SF` : ''],
       ['Year Built', b.yearBuilt],
@@ -538,13 +538,13 @@ function compDetailSheets(d) {
       heading(`Comparable #${i + 1}`),
       kv([
         ['Parcel', c.parcel],
-        ['Address', [c.address, c.city].filter(Boolean).join(', ')],
+        ['Address', [titleCase(c.address), titleCase(c.city)].filter(Boolean).join(', ')],
         ['Sale Date', fmtDate(c.saleDate)],
         ['Sale Price', fmtCurrency(c.price)],
         ['Age', c.age],
         ['Quality', c.quality],
         ['Condition', c.condition],
-        ['Land Area (Acres)', c.landArea > 0 ? String(c.landArea) : ''],
+        ['Land Area (Acres)', c.landArea > 0 ? fmtAcresNum(c.landArea) : ''],
         ['Building Area (SF)', c.buildingArea > 0 ? fmtNumber(c.buildingArea) : ''],
         ['Land to Bldg. Ratio', c.landArea > 0 && c.buildingArea > 0 ? (c.buildingArea / c.landArea).toFixed(2) : ''],
       ]),
@@ -575,8 +575,8 @@ function mapSheet(d) {
     table(
       ['#', 'Parcel', 'Address'],
       [
-        ['S', p.apn || '—', [p.address, p.city].filter(Boolean).join(', ') || '—'],
-        ...comps.map((c, i) => [String(i + 1), c.parcel || '—', [c.address, c.city].filter(Boolean).join(', ') || '—']),
+        ['S', p.apn || '—', [titleCase(p.address), titleCase(p.city)].filter(Boolean).join(', ') || '—'],
+        ...comps.map((c, i) => [String(i + 1), c.parcel || '—', [titleCase(c.address), titleCase(c.city)].filter(Boolean).join(', ') || '—']),
       ],
     ),
   ];
@@ -652,7 +652,7 @@ function updateTopBar() {
   const addr = document.getElementById('tb-addr');
   const sub = document.getElementById('tb-sub');
   const val = document.getElementById('tb-value');
-  if (addr) addr.textContent = [p.address, p.city].map((v) => (v ?? '').trim()).filter(Boolean).join(', ') || '—';
+  if (addr) addr.textContent = [titleCase(p.address), titleCase(p.city)].map((v) => (v ?? '').trim()).filter(Boolean).join(', ') || '—';
   if (sub) sub.textContent = `APN ${p.apn || '—'} · Effective ${fmtDate(p.effectiveDate)}`;
   if (val) val.textContent = fmtCurrency(comp.totalAssessed);
 }

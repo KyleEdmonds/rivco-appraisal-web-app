@@ -3,7 +3,7 @@
 // Left pane: control bar (dates + APN search) + tabbed form
 // Right pane: report staging. Draggable split handle between them.
 // ---------------------------------------------------------------------------
-import { api, state, saveCurrent, loadAppraisal, newAppraisal, fmtCurrency, fmtDate, computeAppraisal, scheduleAutosave, exportWip, importWip, workspace, activeTab, addTab, closeTab } from './core.js';
+import { api, state, saveCurrent, loadAppraisal, newAppraisal, fmtCurrency, fmtNumber, fmtAcresNum, titleCase, fmtDate, computeAppraisal, scheduleAutosave, exportWip, importWip, workspace, activeTab, addTab, closeTab } from './core.js';
 import { renderForm, setTab, loadRepo } from './form.js';
 import { renderReport, fitSheets, zoomBy, zoomFit } from './report.js';
 
@@ -521,11 +521,29 @@ const WQ_NUM_COLS = new Set([...WQ_MONEY_COLS, 'BuildingSf', 'Acreage', 'SquareF
 const WQ_HIDDEN_BY_DEFAULT = new Set(['ClassCat', 'MultTransfer', 'PINsInMult', 'SquareFeet']);
 // Dropdown filters: [column, label] — rendered only when the file has the column.
 const WQ_FILTER_COLS = [['ClassCdDescr', 'Class'], ['QueueUser', 'Queue user'], ['Neighborhood', 'Neighborhood']];
+// Human-readable labels for the raw county column headers (used for the table
+// headers, the Columns menu, and the filter dropdowns).
+const WQ_COL_LABELS = {
+  PIN: 'APN', DocNumber: 'Doc #', RecordDate: 'Record Date', DocDate: 'Doc Date',
+  LocalRatioCd: 'Ratio', Consid: 'Price', StatedSalePrice: 'Price', SalePrice: 'Price',
+  ClassCdDescr: 'Class', ClassCat: 'Category', QueueUser: 'Queue User',
+  Neighborhood: 'Neighborhood', MultTransfer: 'Multi', PINsInMult: 'Parcels',
+  Address: 'Address', City: 'City', YrBuilt: 'Year Built', Quality: 'Quality',
+  Condition: 'Condition', BuildingSf: 'Building SF', Acreage: 'Acres', SquareFeet: 'Site SF',
+};
+const wqLabel = (c) => WQ_COL_LABELS[c] || c;
 
 function wqCell(col, val) {
   if (val == null || val === '') return '—';
   if (WQ_MONEY_COLS.has(col)) return fmtCurrency(Number(val) || 0);
-  return String(val);
+  if (col === 'YrBuilt') return String(val); // a year, not a quantity
+  if (col === 'Quality') return String(val); // a rating, not a quantity
+  if (col === 'Acreage') return fmtAcresNum(val);
+  if (WQ_NUM_COLS.has(col)) {
+    const n = Number(String(val).replace(/[$,]/g, ''));
+    return Number.isFinite(n) ? fmtNumber(n) : String(val);
+  }
+  return titleCase(String(val));
 }
 
 function wqUnique(rows, col) {
@@ -598,7 +616,7 @@ async function showWorkQueue(type) {
             allCols.map((c) => {
               const cb = el('input', { type: 'checkbox', 'data-col': c });
               cb.checked = visible.has(c);
-              return el('label', {}, cb, el('span', {}, c));
+              return el('label', {}, cb, el('span', {}, wqLabel(c)));
             })),
         ),
         el('button', { class: 'btn', onclick: showLanding }, '← Main'),
@@ -668,7 +686,7 @@ async function showWorkQueue(type) {
     }
     body.replaceChildren(el('table', { class: 'list-table' },
       el('thead', {}, el('tr', {}, cols.map((c) => {
-        const th = el('th', { class: (WQ_NUM_COLS.has(c) ? 'num ' : '') + 'sortable' }, c);
+        const th = el('th', { class: (WQ_NUM_COLS.has(c) ? 'num ' : '') + 'sortable' }, wqLabel(c));
         if (sort.col === c) th.classList.add(sort.dir === 1 ? 'sorted-asc' : 'sorted-desc');
         th.onclick = () => {
           if (sort.col === c) sort.dir *= -1;
@@ -701,8 +719,8 @@ function openFromWorkQueue(type, r) {
   if (!Number.isNaN(price)) p.salePrice = price;
   if (r.LocalRatioCd) p.ratioCode = r.LocalRatioCd;
   if (r.ClassCdDescr) d.improvements.primary.type = r.ClassCdDescr;
-  if (r.Address) p.address = r.Address;
-  if (r.City) p.city = r.City;
+  if (r.Address) p.address = titleCase(r.Address);
+  if (r.City) p.city = titleCase(r.City);
   // Property characteristics (when the queue file carries the columns) into
   // the Property Summary's Building / Land groups.
   const b = d.improvements.primary;
@@ -1102,13 +1120,13 @@ function renderPinBody(apn, parcel, mine) {
     body.replaceChildren(
       el('div', { class: 'pin-body-inner' },
         el('div', { class: 'arch-grid pin-grid' },
-          pinDetail('Address', parcel.address),
-          pinDetail('City', city),
-          pinDetail('Class', parcel.class_code),
-          pinDetail('Acreage', parcel.acreage),
-          pinDetail('Site SqFt', parcel.SquareFeet),
-          pinDetail('District', parcel.District),
-          pinDetail('Legal Description', parcel.LegalDescription),
+          pinDetail('Address', titleCase(parcel.address)),
+          pinDetail('City', titleCase(city)),
+          pinDetail('Class', titleCase(parcel.class_code)),
+          pinDetail('Acreage', fmtAcresNum(parcel.acreage)),
+          pinDetail('Site SqFt', fmtNumber(Number(String(parcel.SquareFeet).replace(/[^0-9.]/g, '')) || 0)),
+          pinDetail('District', titleCase(parcel.District)),
+          pinDetail('Legal Description', titleCase(parcel.LegalDescription)),
           pinDetail('Coordinates', parcel.lat && parcel.lng ? `${parcel.lat}, ${parcel.lng}` : ''),
         ),
         buildings.length > 0 ? el('div', { class: 'pin-section' },
@@ -1170,10 +1188,10 @@ function renderPinBody(apn, parcel, mine) {
 function applyParcelFields(d, p) {
   if (!p || typeof p !== 'object') return;
   const prop = d.property;
-  if (p.address) prop.address = p.address;
+  if (p.address) prop.address = titleCase(p.address);
   const district = String(p.District || '').trim();
-  if (district) prop.city = district.split(' ').slice(1).join(' ');
-  if (p.LegalDescription) prop.legalDescription = p.LegalDescription;
+  if (district) prop.city = titleCase(district.split(' ').slice(1).join(' '));
+  if (p.LegalDescription) prop.legalDescription = titleCase(p.LegalDescription);
   const b = d.improvements.primary;
   if (p.class_code) b.type = p.class_code;
   const buildings = Array.isArray(p.imprv) ? p.imprv : [];
