@@ -992,6 +992,7 @@ function stagingToolbar() {
       el('button', { class: 'st-btn', title: 'Download this appraisal as a JSON file', onclick: exportWip }, '⬇ Save to PC'),
       el('button', { class: 'st-btn finalize', title: 'Save this appraisal and archive it as a permanent sales comp', onclick: onFinalize }, '✓ Finalize & Save to Archive'),
       el('button', { class: 'st-btn', title: 'Browse archived (finalized) appraisals', onclick: showArchive }, 'View Archive'),
+      el('button', { class: 'st-btn', title: 'View the county parcel page for this APN', onclick: viewParcelFromReport }, '📍 View Parcel'),
       btn('−', 'Zoom out', () => zoomBy(-0.1)),
       pct,
       btn('+', 'Zoom in', () => zoomBy(0.1)),
@@ -1242,7 +1243,34 @@ function pinBuildings(parcel) {
   return out;
 }
 
-async function showPinPage(apn) {
+// Where the PIN page's back button returns to. Set to 'appraisal' when the
+// PIN page is opened from a report (View Parcel); otherwise the back button
+// goes to the main landing page.
+let pinReturn = 'landing';
+
+// Open the county parcel page for the current report's APN. The working
+// appraisal is preserved, so the PIN page's back button returns here.
+function viewParcelFromReport() {
+  const apn = String(state.data?.property?.apn || '').trim();
+  if (!apn) { toast('No APN on this appraisal yet', true); return; }
+  showPinPage(apn, 'appraisal');
+}
+
+// PIN page back button: return to the report when we came from one,
+// otherwise to the main landing page.
+function backFromPin() {
+  if (pinReturn === 'appraisal' && state.data && state.data.property) {
+    pinReturn = 'landing';
+    showAppraisal();
+    renderTabs();
+    return;
+  }
+  pinReturn = 'landing';
+  showLanding();
+}
+
+async function showPinPage(apn, returnTo = 'landing') {
+  pinReturn = returnTo;
   const main = document.getElementById('main');
   setTopBarLanding(false);
   main.replaceChildren(el('div', { class: 'list-empty' }, 'Loading…'));
@@ -1257,7 +1285,7 @@ async function showPinPage(apn) {
   const view = el('div', { class: 'list-view pin-view' },
     el('div', { class: 'list-head' },
       el('div', { class: 'pin-head-left' },
-        el('button', { class: 'btn', title: 'Back', onclick: () => history.back() }, '←'),
+        el('button', { class: 'btn', title: pinReturn === 'appraisal' ? 'Back to report' : 'Back to main', onclick: backFromPin }, '←'),
         el('h2', {}, apn),
         el('span', { class: 'pin-sub' }, [parcel?.address, normalizeCity(parcel?.city), parcel?.class].filter(Boolean).join(' · ')),
       ),
