@@ -999,7 +999,7 @@ function coverTab() {
 
   // Case-type selector (moved here from the top bar).
   const caseSeg = el('div', { class: 'case-seg', title: 'Case type' },
-    ['transfer', 'appeal', 'stipulation'].map((value) => el('button', {
+    ['transfer', 'appeal', 'stipulation', 'general'].map((value) => el('button', {
       class: `case-btn ${value === caseType ? 'active' : ''}`,
       type: 'button',
       onclick: () => {
@@ -1114,6 +1114,23 @@ function coverTab() {
         areaField('Facts Justifying Reduced Assessment', 'cover.factsJustifying', 3),
         ...detailsFields,
       ),
+    );
+  } else if (caseType === 'general') {
+    sections.push(
+      section('General Appraisal', 'A valuation as of a specific date — no transfer, appeal, or stipulation', null,
+        el('div', { class: 'field-grid c3' },
+          textField('Purpose', 'property.purpose', { placeholder: 'e.g. Refinance, estate, insurance, purchase' }),
+          textField('Report Type', 'property.reportType', { placeholder: 'e.g. Appraisal, Broker Price Opinion' }),
+          textField('Client', 'property.client'),
+        ),
+        el('div', { class: 'field-grid c3' },
+          textField('Prepared By', 'property.appraiser'),
+          textField('Appraiser ID', 'property.appraiserId', { placeholder: 'e.g. 677' }),
+          textField('Section', 'property.section', { placeholder: 'e.g. Riverside Commercial' }),
+        ),
+        areaField('Appraiser Notes', 'property.appraiserNotes', 3),
+      ),
+      imageUploadField('Subject Property Photo', 'property.subjectPhotoUrl'),
     );
   }
   return sections;

@@ -26,6 +26,7 @@ function reportTitle(d) {
   const caseType = d.property.caseType || 'transfer';
   if (caseType === 'appeal') return 'Property Appeal Valuation Report';
   if (caseType === 'stipulation') return 'Proposed Stipulation Valuation Report';
+  if (caseType === 'general') return 'Property Valuation Report';
   return 'Transfer Valuation Report';
 }
 function sheet(page, total, content) {
@@ -102,6 +103,7 @@ function coverSheet(d, total) {
   const caseType = d.property.caseType || 'transfer';
   if (caseType === 'appeal') return appealCover(d);
   if (caseType === 'stipulation') return stipulationCover(d, total);
+  if (caseType === 'general') return generalCover(d, total);
   return transferCover(d, total);
 }
 
@@ -166,6 +168,75 @@ function transferCover(d, total) {
   return sheet(1, total,
     el('div', { class: 'cover-inner trc2-inner' },
       el('div', { class: 'trc2-row' }, propertyId, transferDetails),
+      el('div', { class: 'trc2-row' }, valuation),
+      el('div', { class: 'trc2-row' }, appraiserInfo, appraiserNotes),
+      el('div', { class: 'trc2-row' }, subjectPhoto),
+    ),
+  );
+}
+
+// General cover: a plain valuation as of a date — property identification,
+// purpose, valuation, appraiser info/notes, and subject photo. No transfer,
+// appeal, or stipulation specifics.
+function generalCover(d, total) {
+  const p = d.property;
+  const comp = computeAppraisal(d);
+  const field = (label, value) => el('div', { class: 'trc2-field' },
+    el('div', { class: 'trc2-k' }, label),
+    el('div', { class: 'trc2-v' }, value || '—'),
+  );
+  const box = (title, body) => el('div', { class: 'trc2-box' },
+    el('header', {}, title),
+    el('div', { class: 'trc2-body' }, body),
+  );
+
+  const propertyId = box('Property Identification',
+    el('div', { class: 'trc2-fields' },
+      field('APN', p.apn),
+      field('Situs', titleCase(p.address)),
+      field('City', normalizeCity(p.city)),
+      field('Property Type', d.improvements.primary.type),
+    ),
+  );
+
+  const purpose = box('Purpose',
+    el('div', { class: 'trc2-fields' },
+      field('Reason', p.purpose),
+      field('Report Type', p.reportType),
+      field('Client', p.client),
+    ),
+  );
+
+  const finalValue = d.reconciliation.finalValue || comp.reconciliation.weightedValue;
+  const valuation = box('Valuation Details',
+    el('div', { class: 'trc2-fields trc2-cols2' },
+      field('Effective Date', fmtDate(p.effectiveDate)),
+      field('Final Value', finalValue > 0 ? fmtCurrency(finalValue) : '—'),
+    ),
+  );
+
+  const appraiserInfo = box('Appraiser Info',
+    el('div', { class: 'trc2-fields' },
+      field('Prepared By', p.appraiser),
+      field('Appraiser ID', p.appraiserId),
+    ),
+  );
+
+  const appraiserNotes = box('Appraiser Notes',
+    el('div', { class: 'trc2-notes' }, p.appraiserNotes || '—'),
+  );
+
+  const subjectPhoto = box('Subject Property Photo',
+    el('div', { class: 'trc2-photo' },
+      p.subjectPhotoUrl
+        ? el('img', { src: p.subjectPhotoUrl, alt: 'Subject property' })
+        : el('div', { class: 'trc2-photo-ph' }, 'No photo'),
+    ),
+  );
+
+  return sheet(1, total,
+    el('div', { class: 'cover-inner trc2-inner' },
+      el('div', { class: 'trc2-row' }, propertyId, purpose),
       el('div', { class: 'trc2-row' }, valuation),
       el('div', { class: 'trc2-row' }, appraiserInfo, appraiserNotes),
       el('div', { class: 'trc2-row' }, subjectPhoto),

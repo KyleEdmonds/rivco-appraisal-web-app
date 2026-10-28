@@ -264,13 +264,50 @@ async function showLanding() {
   try { recent = await api.listAppraisals(); } catch { /* offline data */ }
 
   setTopBarLanding(true);
+
+  // Parcel search results table (populated as the user types).
+  const results = el('div', { class: 'landing-results' });
+  const renderResults = (rows) => {
+    if (!rows.length) {
+      results.replaceChildren(el('div', { class: 'landing-results-empty' }, 'No parcels match.'));
+      return;
+    }
+    results.replaceChildren(
+      el('table', { class: 'list-table landing-results-table' },
+        el('thead', {}, el('tr', {}, ['APN', 'Address', 'City', 'Class', 'Acres'].map((h) => el('th', {}, h)))),
+        el('tbody', {}, rows.map((r) => el('tr', { class: 'clickable', onclick: () => showPinPage(r.apn) },
+          el('td', {}, r.apn),
+          el('td', {}, titleCase(r.address) || '—'),
+          el('td', {}, normalizeCity(r.city) || '—'),
+          el('td', {}, titleCase(r.class) || '—'),
+          el('td', { class: 'num' }, r.acreage ? fmtAcresNum(r.acreage) : '—'),
+        ))),
+      ),
+    );
+  };
+
+  const input = el('input', { class: 'landing-search-input', placeholder: 'Search APN or address…' });
+  let searchTimer = null;
+  input.addEventListener('input', () => {
+    const q = input.value.trim();
+    clearTimeout(searchTimer);
+    if (!q) { results.replaceChildren(); return; }
+    searchTimer = setTimeout(async () => {
+      let rows = [];
+      try { rows = await api.parcelSearch(q); } catch { rows = []; }
+      renderResults(Array.isArray(rows) ? rows : []);
+    }, 150);
+  });
+
   main.replaceChildren(
     el('div', { class: 'landing' },
+      el('div', { class: 'landing-head' },
+        el('h1', {}, 'Parcel Search'),
+        el('p', {}, 'Search by APN or address to view a parcel and start a report.'),
+      ),
+      el('div', { class: 'landing-search' }, input),
+      results,
       el('div', { class: 'landing-cards' },
-        el('button', { class: 'landing-card primary', onclick: openNew },
-          el('div', { class: 'lc-icon' }, '📝'),
-          el('div', { class: 'lc-title' }, 'New Appraisal'),
-        ),
         el('button', { class: 'landing-card', onclick: () => showWorkQueue('transfers') },
           el('div', { class: 'lc-icon' }, '🏢'),
           el('div', { class: 'lc-title' }, 'Transfer Queue'),
@@ -278,6 +315,10 @@ async function showLanding() {
         el('button', { class: 'landing-card', onclick: () => showWorkQueue('appeals') },
           el('div', { class: 'lc-icon' }, '⚖️'),
           el('div', { class: 'lc-title' }, 'Appeal Queue'),
+        ),
+        el('button', { class: 'landing-card', onclick: openNew },
+          el('div', { class: 'lc-icon' }, '📝'),
+          el('div', { class: 'lc-title' }, 'New Appraisal'),
         ),
       ),
       el('div', { class: 'landing-recent' },
@@ -1097,7 +1138,13 @@ async function showPinPage(apn) {
         el('h2', {}, apn),
         el('span', { class: 'pin-sub' }, [parcel?.address, normalizeCity(parcel?.city), parcel?.class].filter(Boolean).join(' · ')),
       ),
-      el('button', { class: 'btn primary', onclick: () => openAppraisalFromParcel(apn) }, '+ New Appraisal'),
+      el('div', { class: 'pin-actions' },
+        el('span', { class: 'pin-actions-label' }, 'Start a report'),
+        el('button', { class: 'btn primary', title: 'Transfer valuation report', onclick: () => openAppraisalFromParcel(apn, 'transfer') }, 'Transfer'),
+        el('button', { class: 'btn', title: 'Appeal valuation report', onclick: () => openAppraisalFromParcel(apn, 'appeal') }, 'Appeal'),
+        el('button', { class: 'btn', title: 'Stipulation report', onclick: () => openAppraisalFromParcel(apn, 'stipulation') }, 'Stipulation'),
+        el('button', { class: 'btn', title: 'General appraisal — a valuation as of a date', onclick: () => openAppraisalFromParcel(apn, 'general') }, 'General'),
+      ),
     ),
     el('div', { class: 'tabs' },
       el('button', { class: `tab ${pinTab === 'characteristics' ? 'active' : ''}`, onclick: () => { pinTab = 'characteristics'; showPinPage(apn); } }, 'Characteristics'),
@@ -1215,10 +1262,11 @@ function applyParcelFields(d, p) {
   if (Number.isFinite(sqft) && sqft > 0) d.land.siteAreaSqFt = sqft;
 }
 
-async function openAppraisalFromParcel(apn) {
+async function openAppraisalFromParcel(apn, caseType = 'transfer') {
   newAppraisal();
   const d = state.data;
   d.property.apn = apn;
+  d.property.caseType = caseType;
   try {
     const parcel = await api.getParcelData(apn);
     applyParcelFields(d, parcel);
