@@ -505,7 +505,7 @@ async function renderTransferQueue(bucket) {
 }
 
 // --- Work queues (transfers_to_be_worked / appeals_to_be_done) -----------------
-// A simple, filterable table of a "to be worked" file in input/.
+// A filterable, sortable table of a "to be worked" file in input/.
 // Clicking a row opens a new appraisal pre-filled from that row.
 
 const WORK_QUEUE_META = {
@@ -515,11 +515,41 @@ const WORK_QUEUE_META = {
 
 // Columns rendered as currency / right-aligned in the work-queue table.
 const WQ_MONEY_COLS = new Set(['StatedSalePrice', 'Price', 'SalePrice', 'Consideration', 'Consid']);
+// Numeric columns: right-aligned with tabular figures, sorted numerically.
+const WQ_NUM_COLS = new Set([...WQ_MONEY_COLS, 'BuildingSf', 'Acreage', 'SquareFeet', 'YrBuilt', 'PINsInMult', 'Quality']);
+// Hidden by default (toggle via the Columns menu).
+const WQ_HIDDEN_BY_DEFAULT = new Set(['ClassCat', 'MultTransfer', 'PINsInMult', 'SquareFeet']);
+// Dropdown filters: [column, label] — rendered only when the file has the column.
+const WQ_FILTER_COLS = [['ClassCdDescr', 'Class'], ['QueueUser', 'Queue user'], ['Neighborhood', 'Neighborhood']];
 
 function wqCell(col, val) {
   if (val == null || val === '') return '—';
   if (WQ_MONEY_COLS.has(col)) return fmtCurrency(Number(val) || 0);
   return String(val);
+}
+
+function wqUnique(rows, col) {
+  const s = new Set();
+  for (const r of rows) {
+    const v = r[col];
+    if (v != null && v !== '') s.add(String(v));
+  }
+  return [...s].sort((a, b) => a.localeCompare(b));
+}
+
+// Sort comparator for a column: numeric when the column is numeric, else
+// string; blank values always sort last.
+function wqCompare(a, b, col) {
+  const av = a[col], bv = b[col];
+  const ae = av == null || av === '', be = bv == null || bv === '';
+  if (ae && be) return 0;
+  if (ae) return 1;
+  if (be) return -1;
+  if (WQ_NUM_COLS.has(col)) {
+    const n = (v) => Number(String(v).replace(/[$,]/g, '')) || 0;
+    return n(av) - n(bv);
+  }
+  return String(av).localeCompare(String(bv));
 }
 
 async function showWorkQueue(type) {
@@ -535,46 +565,123 @@ async function showWorkQueue(type) {
       el('div', { class: 'list-empty' }, `Failed to load: ${e.message}`)));
     return;
   }
-  const rows = data.rows || [];
-  const columns = data.columns || [];
+  const allRows = data.rows || [];
+  const allCols = data.columns || [];
+  const visible = new Set(allCols.filter((c) => !WQ_HIDDEN_BY_DEFAULT.has(c)));
+  const sort = { col: null, dir: 1 };
+  const filters = { q: '' };
+  for (const [c] of WQ_FILTER_COLS) filters[c] = '';
+
+  // Dropdown filters for the columns this file actually carries.
+  const selects = [];
+  for (const [col, label] of WQ_FILTER_COLS) {
+    if (!allCols.includes(col)) continue;
+    const opts = wqUnique(allRows, col);
+    if (opts.length <= 1) continue;
+    selects.push(el('select', { class: 'wq-select', 'data-col': col },
+      [el('option', { value: '' }, `${label}: all`),
+       ...opts.map((o) => el('option', { value: o }, o))]));
+  }
+
   const view = el('div', { class: 'list-view workqueue-view' },
     el('div', { class: 'list-head' },
-      el('h2', {}, meta.title),
-      el('span', { class: 'r2-sub' }, data.file
-        ? `${data.file} · ${rows.length.toLocaleString()} rows`
-        : 'no file yet'),
-      el('button', { class: 'btn', onclick: showLanding }, '← Main'),
+      el('div', { class: 'wq-head-left' },
+        el('h2', {}, meta.title),
+        el('span', { class: 'r2-sub' }, data.file
+          ? `${data.file} · ${allRows.length.toLocaleString()} rows`
+          : 'no file yet'),
+      ),
+      el('div', { class: 'wq-head-right' },
+        el('div', { class: 'wq-cols-wrap' },
+          el('button', { class: 'btn', id: 'wq-cols-btn', title: 'Show / hide columns' }, 'Columns ▾'),
+          el('div', { class: 'wq-cols', id: 'wq-cols' },
+            allCols.map((c) => {
+              const cb = el('input', { type: 'checkbox', 'data-col': c });
+              cb.checked = visible.has(c);
+              return el('label', {}, cb, el('span', {}, c));
+            })),
+        ),
+        el('button', { class: 'btn', onclick: showLanding }, '← Main'),
+      ),
     ),
     el('div', { class: 'wq-filter' },
-      el('input', { class: 'wq-search', type: 'search', placeholder: 'Filter by APN, doc #, class, neighborhood, queue user…' })),
-    el('div', { id: 'wq-body' }, el('div', { class: 'list-empty' }, 'Loading…')),
+      el('input', { class: 'wq-search', type: 'search', id: 'wq-search',
+        placeholder: 'Search APN, address, city, doc #…' }),
+      ...selects,
+      el('button', { class: 'btn tiny', id: 'wq-clear', hidden: true }, '✕ Clear'),
+      el('span', { class: 'wq-count', id: 'wq-count' }, ''),
+    ),
+    el('div', { class: 'wq-table-wrap', id: 'wq-body' }, el('div', { class: 'list-empty' }, 'Loading…')),
   );
   main.replaceChildren(view);
-  const search = view.querySelector('.wq-search');
-  const render = (filter) => {
+  const search = view.querySelector('#wq-search');
+  const clearBtn = view.querySelector('#wq-clear');
+  const countEl = view.querySelector('#wq-count');
+  const colsBtn = view.querySelector('#wq-cols-btn');
+  const colsMenu = view.querySelector('#wq-cols');
+  // Columns menu: toggle on click; closes on outside click via the
+  // module-level document handler (same pattern as the WIP menu).
+  colsBtn.onclick = (e) => { e.stopPropagation(); colsMenu.classList.toggle('open'); };
+  colsMenu.onclick = (e) => e.stopPropagation();
+  colsMenu.querySelectorAll('input[type=checkbox]').forEach((cb) => {
+    cb.onchange = () => {
+      if (cb.checked) visible.add(cb.dataset.col); else visible.delete(cb.dataset.col);
+      render();
+    };
+  });
+  search.addEventListener('input', () => { filters.q = search.value; render(); });
+  selects.forEach((s) => { s.onchange = () => { filters[s.dataset.col] = s.value; render(); }; });
+  clearBtn.onclick = () => {
+    filters.q = ''; search.value = '';
+    selects.forEach((s) => { filters[s.dataset.col] = ''; s.value = ''; });
+    render();
+  };
+
+  const render = () => {
     const body = document.getElementById('wq-body');
     if (!body) return;
     if (!data.file) {
-      body.replaceChildren(el('div', { class: 'list-empty' },
-        `No ${meta.file} file in input/ yet — drop the .csv/.xlsx there and reload.`));
+      body.replaceChildren(el('div', { class: 'wq-empty' },
+        el('div', { class: 'wq-empty-icon' }, '📋'),
+        el('div', {}, `No ${meta.file} file in input/ yet — drop the .csv/.xlsx there and reload.`)));
       return;
     }
-    const f = (filter || '').trim().toLowerCase();
-    const shown = f
-      ? rows.filter((r) => columns.some((c) => String(r[c] ?? '').toLowerCase().includes(f)))
-      : rows;
-    if (shown.length === 0) {
-      body.replaceChildren(el('div', { class: 'list-empty' }, 'No rows match your filter.'));
+    const q = filters.q.trim().toLowerCase();
+    let shown = allRows;
+    if (q) shown = shown.filter((r) => allCols.some((c) => String(r[c] ?? '').toLowerCase().includes(q)));
+    for (const [c] of WQ_FILTER_COLS)
+      if (filters[c]) shown = shown.filter((r) => String(r[c] ?? '') === filters[c]);
+    if (sort.col) {
+      const col = sort.col, dir = sort.dir;
+      shown = [...shown].sort((a, b) => wqCompare(a, b, col) * dir);
+    }
+    const active = q !== '' || selects.some((s) => s.value !== '');
+    clearBtn.hidden = !active;
+    countEl.textContent = active
+      ? `Showing ${shown.length.toLocaleString()} of ${allRows.length.toLocaleString()}`
+      : `${allRows.length.toLocaleString()} rows`;
+    const cols = allCols.filter((c) => visible.has(c));
+    if (shown.length === 0 || cols.length === 0) {
+      body.replaceChildren(el('div', { class: 'list-empty' },
+        shown.length === 0 ? 'No rows match your filters.' : 'No columns visible — enable some via Columns ▾.'));
       return;
     }
     body.replaceChildren(el('table', { class: 'list-table' },
-      el('thead', {}, el('tr', {}, columns.map((c) => el('th', {}, c)))),
+      el('thead', {}, el('tr', {}, cols.map((c) => {
+        const th = el('th', { class: (WQ_NUM_COLS.has(c) ? 'num ' : '') + 'sortable' }, c);
+        if (sort.col === c) th.classList.add(sort.dir === 1 ? 'sorted-asc' : 'sorted-desc');
+        th.onclick = () => {
+          if (sort.col === c) sort.dir *= -1;
+          else { sort.col = c; sort.dir = 1; }
+          render();
+        };
+        return th;
+      }))),
       el('tbody', {}, shown.map((r) => el('tr', { class: 'clickable', onclick: () => openFromWorkQueue(type, r) },
-        columns.map((c) => el('td', { class: WQ_MONEY_COLS.has(c) ? 'num' : '' }, wqCell(c, r[c]))))))),
-    );
+        cols.map((c) => el('td', { class: WQ_NUM_COLS.has(c) ? 'num' : '' }, wqCell(c, r[c])))))),
+    ));
   };
-  search.addEventListener('input', () => render(search.value));
-  render('');
+  render();
 }
 
 // Open a new appraisal pre-filled from a work-queue row. Maps the common
@@ -1164,10 +1271,13 @@ window.addEventListener('appraisal:changed', updateTabStrip);
 // Debounced autosave of the working appraisal (WIP) on every form edit.
 window.addEventListener('appraisal:changed', scheduleAutosave);
 
-// Close the WIP dropdown when clicking anywhere outside it (bound once).
+// Close the WIP dropdown and the work-queue Columns menu when clicking
+// anywhere outside them (bound once).
 document.addEventListener('click', () => {
   const m = document.getElementById('wip-menu');
   if (m) m.classList.remove('open');
+  const c = document.getElementById('wq-cols');
+  if (c) c.classList.remove('open');
 });
 
 // Warn on unload with unsaved changes.
