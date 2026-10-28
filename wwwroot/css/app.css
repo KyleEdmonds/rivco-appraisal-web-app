@@ -1757,3 +1757,46 @@ tr.tq-done td { color: #94a3b8; }
   border: 1px solid var(--line, #e2e8f0);
   border-radius: 4px;
 }
+/* Two-column PIN layout: main (map + characteristics) + side (sales + valuations). */
+.pin-cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+.pin-col {
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+.pin-col .pin-section { margin-top: 0; }
+.pin-view .list-head { flex-wrap: wrap; gap: 10px; }
+.pin-actions { flex-wrap: wrap; }
+/* Parcel map (SVG drawn from the county polygon). */
+.pin-map {
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  overflow: hidden;
+  background: #eef2f7;
+}
+.pin-map svg { display: block; width: 100%; height: auto; }
+.pin-map-cap {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 10px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted, #64748b);
+  border-top: 1px solid var(--line, #e2e8f0);
+  background: #fff;
+}
+@media (max-width: 900px) {
+  .pin-cols { grid-template-columns: 1fr; }
+}

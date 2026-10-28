@@ -1094,11 +1094,96 @@ function openArchiveDetail(r) {
 // and a one-click "New Appraisal" pre-filled from the parcel data.
 // Reachable from the top-bar search (parcel suggestions) or ?pin=APN.
 
-let pinTab = 'characteristics';
-
 const pinDetail = (label, value) => el('div', { class: 'arch-field' },
   el('div', { class: 'arch-label' }, label),
   el('div', { class: 'arch-value' }, (value === undefined || value === null || value === '') ? '—' : String(value)));
+
+// --- parcel map ---------------------------------------------------------------
+// Parse a WKT POLYGON / MULTIPOLYGON string into an array of rings; each ring
+// is an array of [lng, lat] points. The innermost parenthesized groups are the
+// rings (outer rings + holes), so a single regex pass over them is enough.
+function parseWktPolygon(wkt) {
+  const out = [];
+  if (!wkt) return out;
+  const s = String(wkt).trim();
+  const groupRe = /\(([^()]+)\)/g;
+  let m;
+  while ((m = groupRe.exec(s)) !== null) {
+    const coords = m[1].split(',').map((pair) => {
+      const p = pair.trim().split(/\s+/);
+      return [parseFloat(p[0]), parseFloat(p[1])];
+    }).filter((pt) => Number.isFinite(pt[0]) && Number.isFinite(pt[1]));
+    if (coords.length >= 3) out.push(coords);
+  }
+  return out;
+}
+
+// Draw the parcel's polygon as a self-contained SVG (grid, filled outline,
+// centroid marker, north arrow). Returns a wrapper element, or null when the
+// parcel has no usable shape.
+function drawParcelMap(parcel) {
+  const rings = parseWktPolygon(parcel.shape);
+  if (rings.length === 0) return null;
+  let minLng = Infinity, maxLng = -Infinity, minLat = Infinity, maxLat = -Infinity;
+  for (const ring of rings) for (const [lng, lat] of ring) {
+    if (lng < minLng) minLng = lng; if (lng > maxLng) maxLng = lng;
+    if (lat < minLat) minLat = lat; if (lat > maxLat) maxLat = lat;
+  }
+  const padLng = (maxLng - minLng) * 0.18 || 0.0004;
+  const padLat = (maxLat - minLat) * 0.18 || 0.0004;
+  minLng -= padLng; maxLng += padLng; minLat -= padLat; maxLat += padLat;
+  const W = 560, H = 400;
+  const x = (lng) => ((lng - minLng) / (maxLng - minLng)) * W;
+  const y = (lat) => (H - ((lat - minLat) / (maxLat - minLat)) * H);
+  const pathFor = (ring) =>
+    ring.map(([lng, lat], i) => `${i === 0 ? 'M' : 'L'}${x(lng).toFixed(1)} ${y(lat).toFixed(1)}`).join(' ') + ' Z';
+
+  let grid = '';
+  for (let i = 1; i < 8; i++) {
+    const gx = (W / 8) * i, gy = (H / 8) * i;
+    grid += `<line x1="${gx}" y1="0" x2="${gx}" y2="${H}" stroke="#dbe3ee" stroke-width="1"/>`;
+    grid += `<line x1="0" y1="${gy}" x2="${W}" y2="${gy}" stroke="#dbe3ee" stroke-width="1"/>`;
+  }
+  const paths = rings.map((r) =>
+    `<path d="${pathFor(r)}" fill="rgba(30,58,138,0.18)" stroke="#1e3a8a" stroke-width="2" stroke-linejoin="round"/>`).join('');
+  let marker = '';
+  if (parcel.lat && parcel.lng) {
+    marker = `<circle cx="${x(parcel.lng).toFixed(1)}" cy="${y(parcel.lat).toFixed(1)}" r="4" fill="#b45309" stroke="#fff" stroke-width="1.5"/>`;
+  }
+  const svg =
+    `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Parcel map">` +
+    `<rect x="0" y="0" width="${W}" height="${H}" fill="#eef2f7"/>` +
+    grid + paths + marker +
+    `<g font-family="sans-serif" font-size="12" font-weight="700" fill="#64748b">` +
+    `<text x="${W - 14}" y="18" text-anchor="middle">N</text>` +
+    `<polygon points="${W - 14},22 ${W - 18},30 ${W - 10},30" fill="#64748b"/>` +
+    `</g></svg>`;
+  const wrap = el('div', { class: 'pin-map' });
+  wrap.innerHTML = svg +
+    `<div class="pin-map-cap"><span>Parcel Map</span><span>${rings.length} ring${rings.length === 1 ? '' : 's'}</span></div>`;
+  return wrap;
+}
+
+// Build a Google image-search query for a parcel: the address when present,
+// otherwise (vacant land) an intersection parsed from the legal description,
+// falling back to the legal description or APN + city.
+function parcelImageQuery(parcel) {
+  if (!parcel) return '';
+  const addr = String(parcel.address || '').trim();
+  if (addr) return addr;
+  const ld = String(parcel.LegalDescription || '');
+  const m = ld.match(/AT\s+INTERSECTION\s+OF\s+(.{2,80}?)(?:\s+AND\s+(.{2,80}?))?/i);
+  if (m) return (m[1] + (m[2] ? ' and ' + m[2] : '')).trim();
+  if (ld) return ld;
+  const city = normalizeCity(String(parcel.District || '').split(' ').slice(1).join(' '));
+  return `${parcel.Account || ''} ${city}`.trim();
+}
+
+function googleImageSearch(parcel) {
+  const q = parcelImageQuery(parcel);
+  if (!q) { toast('No address or intersection to search for', true); return; }
+  window.open('https://www.google.com/search?tbm=isch&q=' + encodeURIComponent(q), '_blank', 'noopener');
+}
 
 // Flatten the RivCo imprv[] building records into display rows.
 function pinBuildings(parcel) {
@@ -1139,6 +1224,7 @@ async function showPinPage(apn) {
         el('span', { class: 'pin-sub' }, [parcel?.address, normalizeCity(parcel?.city), parcel?.class].filter(Boolean).join(' · ')),
       ),
       el('div', { class: 'pin-actions' },
+        el('button', { class: 'btn', title: 'Open Google image search for this parcel', onclick: () => googleImageSearch(parcel) }, '🔍 Images'),
         el('span', { class: 'pin-actions-label' }, 'Start a report'),
         el('button', { class: 'btn primary', title: 'Transfer valuation report', onclick: () => openAppraisalFromParcel(apn, 'transfer') }, 'Transfer'),
         el('button', { class: 'btn', title: 'Appeal valuation report', onclick: () => openAppraisalFromParcel(apn, 'appeal') }, 'Appeal'),
@@ -1146,9 +1232,6 @@ async function showPinPage(apn) {
         el('button', { class: 'btn', title: 'General appraisal — a valuation as of a date', onclick: () => openAppraisalFromParcel(apn, 'general') }, 'General'),
       ),
     ),
-    el('div', { class: 'tabs' },
-      el('button', { class: `tab ${pinTab === 'characteristics' ? 'active' : ''}`, onclick: () => { pinTab = 'characteristics'; showPinPage(apn); } }, 'Characteristics'),
-      el('button', { class: `tab ${pinTab === 'valuations' ? 'active' : ''}`, onclick: () => { pinTab = 'valuations'; showPinPage(apn); } }, `Past Valuations (${mine.length})`)),
     el('div', { id: 'pin-body' }),
   );
   main.replaceChildren(view);
@@ -1158,65 +1241,68 @@ async function showPinPage(apn) {
 function renderPinBody(apn, parcel, mine) {
   const body = document.getElementById('pin-body');
   if (!body) return;
-  if (pinTab === 'characteristics') {
-    if (!parcel) {
-      body.replaceChildren(el('div', { class: 'r2-none' }, 'No county parcel record for this PIN — start an appraisal manually.'));
-      return;
-    }
-    const city = String(parcel.District || '').split(' ').slice(1).join(' ');
-    const buildings = pinBuildings(parcel);
-    body.replaceChildren(
-      el('div', { class: 'pin-body-inner' },
-        el('div', { class: 'arch-grid pin-grid' },
-          pinDetail('Address', titleCase(parcel.address)),
-          pinDetail('City', normalizeCity(city)),
-          pinDetail('Class', titleCase(parcel.class_code)),
-          pinDetail('Acreage', fmtAcresNum(parcel.acreage)),
-          pinDetail('Site SqFt', fmtNumber(Number(String(parcel.SquareFeet).replace(/[^0-9.]/g, '')) || 0)),
-          pinDetail('District', titleCase(parcel.District)),
-          pinDetail('Legal Description', titleCase(parcel.LegalDescription)),
-          pinDetail('Coordinates', parcel.lat && parcel.lng ? `${parcel.lat}, ${parcel.lng}` : ''),
-        ),
-        buildings.length > 0 ? el('div', { class: 'pin-section' },
-          el('div', { class: 'pin-section-title' }, `Buildings (${buildings.length})`),
-          el('table', { class: 'list-table' },
-            el('thead', {}, el('tr', {}, ['Building', 'Type', 'Year Built', 'Quality', 'Condition', 'Area SF', 'Status'].map((h) => el('th', {}, h)))),
-            el('tbody', {}, buildings.map((b) => el('tr', {},
-              el('td', {}, b.name),
-              el('td', {}, b.type || '—'),
-              el('td', { class: 'num' }, b.yearBuilt || '—'),
-              el('td', { class: 'num' }, b.quality || '—'),
-              el('td', {}, b.condition || '—'),
-              el('td', { class: 'num' }, b.area || '—'),
-              el('td', {}, b.active || '—'),
-            ))),
-          ))
-          : null,
-        (parcel.sales || []).length > 0 ? el('div', { class: 'pin-section' },
-          el('div', { class: 'pin-section-title' }, 'County Sales History'),
-          el('table', { class: 'list-table' },
-            el('thead', {}, el('tr', {}, ['Sale Date', 'Price', 'Ratio', 'Doc #'].map((h) => el('th', {}, h)))),
-            el('tbody', {}, (parcel.sales || []).map((s) => el('tr', {},
-              el('td', {}, s.saledate || '—'),
-              el('td', { class: 'num' }, s.SalePrice || '—'),
-              el('td', {}, s.LocalRatioCd || '—'),
-              el('td', {}, s.DocNumber || '—'),
-            ))),
-          ))
-          : null,
-        parcel.strview ? el('div', { class: 'pin-section' },
-          el('div', { class: 'pin-section-title' }, 'Street View'),
-          el('img', { class: 'pin-strview', src: parcel.strview, alt: 'Street view', loading: 'lazy' }))
-          : null,
-      ),
-    );
+  if (!parcel) {
+    body.replaceChildren(el('div', { class: 'r2-none' }, 'No county parcel record for this PIN — start an appraisal manually.'));
     return;
   }
-  // Past valuations: appraisals saved for this APN, newest report date first.
-  body.replaceChildren(
-    el('div', { class: 'pin-body-inner' },
+  const city = String(parcel.District || '').split(' ').slice(1).join(' ');
+  const buildings = pinBuildings(parcel);
+
+  // Left (main) column: map, characteristics, buildings, street view.
+  const left = el('div', { class: 'pin-col pin-col-main' },
+    drawParcelMap(parcel),
+    el('div', { class: 'pin-section' },
+      el('div', { class: 'pin-section-title' }, 'Characteristics'),
+      el('div', { class: 'arch-grid pin-grid' },
+        pinDetail('Address', titleCase(parcel.address)),
+        pinDetail('City', normalizeCity(city)),
+        pinDetail('Class', titleCase(parcel.class_code)),
+        pinDetail('Acreage', fmtAcresNum(parcel.acreage)),
+        pinDetail('Site SqFt', fmtNumber(Number(String(parcel.SquareFeet).replace(/[^0-9.]/g, '')) || 0)),
+        pinDetail('District', titleCase(parcel.District)),
+        pinDetail('Legal Description', titleCase(parcel.LegalDescription)),
+        pinDetail('Coordinates', parcel.lat && parcel.lng ? `${parcel.lat}, ${parcel.lng}` : ''),
+      ),
+    ),
+    buildings.length > 0 ? el('div', { class: 'pin-section' },
+      el('div', { class: 'pin-section-title' }, `Buildings (${buildings.length})`),
+      el('table', { class: 'list-table' },
+        el('thead', {}, el('tr', {}, ['Building', 'Type', 'Year Built', 'Quality', 'Condition', 'Area SF', 'Status'].map((h) => el('th', {}, h)))),
+        el('tbody', {}, buildings.map((b) => el('tr', {},
+          el('td', {}, b.name),
+          el('td', {}, b.type || '—'),
+          el('td', { class: 'num' }, b.yearBuilt || '—'),
+          el('td', { class: 'num' }, b.quality || '—'),
+          el('td', {}, b.condition || '—'),
+          el('td', { class: 'num' }, b.area || '—'),
+          el('td', {}, b.active || '—'),
+        ))),
+      ))
+      : null,
+    parcel.strview ? el('div', { class: 'pin-section' },
+      el('div', { class: 'pin-section-title' }, 'Street View'),
+      el('img', { class: 'pin-strview', src: parcel.strview, alt: 'Street view', loading: 'lazy' }))
+      : null,
+  );
+
+  // Right (side) column: county sales history + past valuations.
+  const right = el('div', { class: 'pin-col pin-col-side' },
+    (parcel.sales || []).length > 0 ? el('div', { class: 'pin-section' },
+      el('div', { class: 'pin-section-title' }, 'County Sales History'),
+      el('table', { class: 'list-table' },
+        el('thead', {}, el('tr', {}, ['Sale Date', 'Price', 'Ratio', 'Doc #'].map((h) => el('th', {}, h)))),
+        el('tbody', {}, (parcel.sales || []).map((s) => el('tr', {},
+          el('td', {}, s.saledate || '—'),
+          el('td', { class: 'num' }, s.SalePrice || '—'),
+          el('td', {}, s.LocalRatioCd || '—'),
+          el('td', {}, s.DocNumber || '—'),
+        ))),
+      ))
+      : null,
+    el('div', { class: 'pin-section' },
+      el('div', { class: 'pin-section-title' }, `Past Valuations (${mine.length})`),
       mine.length === 0
-        ? el('div', { class: 'r2-none' }, 'No appraisals for this PIN yet — start one with + New Appraisal.')
+        ? el('div', { class: 'r2-none' }, 'No appraisals for this PIN yet — start one above.')
         : el('table', { class: 'list-table' },
             el('thead', {}, el('tr', {}, ['Report Date', 'Final Value', 'Updated', ''].map((h) => el('th', {}, h)))),
             el('tbody', {}, mine.map((r) => el('tr', { class: 'clickable', onclick: () => openById(r.id) },
@@ -1225,9 +1311,10 @@ function renderPinBody(apn, parcel, mine) {
               el('td', {}, r.updatedAt ? new Date(r.updatedAt).toLocaleDateString() : '—'),
               el('td', {}, el('button', { class: 'btn tiny', onclick: (e) => { e.stopPropagation(); openById(r.id); } }, 'Open')),
             ))),
-          ),
-    ),
+        )),
   );
+
+  body.replaceChildren(el('div', { class: 'pin-cols' }, left, right));
 }
 
 // Start a new appraisal pre-filled from the county parcel record: address,
