@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------------------
 import {
   state, computeAppraisal, hasCostData, hasIncomeData,
-  fmtCurrency, fmtCurrencyRounded, fmtNumber, fmtPct, fmtAcresNum, titleCase, fmtDate, todayISO,
+  fmtCurrency, fmtCurrencyRounded, fmtNumber, fmtPct, fmtAcresNum, titleCase, normalizeCity, fmtDate, todayISO,
   generateReconciliationNarrative,
 } from './core.js';
 
@@ -124,7 +124,7 @@ function transferCover(d, total) {
     el('div', { class: 'trc2-fields' },
       field('APN', p.apn),
       field('Situs', titleCase(p.address)),
-      field('City', titleCase(p.city)),
+      field('City', normalizeCity(p.city)),
       field('Property Type', d.improvements.primary.type),
     ),
   );
@@ -487,12 +487,12 @@ function subjectPropertySheet(d) {
         fmtCurrency(p.salePrice),
         gfa > 0 ? fmtNumber(gfa) : '—',
         psf > 0 ? fmtCurrency(psf) : '—',
-        [titleCase(p.address), titleCase(p.city)].filter(Boolean).join(', ') || '—',
+        [titleCase(p.address), normalizeCity(p.city)].filter(Boolean).join(', ') || '—',
       ]],
     ),
     heading('Property Description'),
     kv([
-      ['Address', [titleCase(p.address), titleCase(p.city), p.zip].filter(Boolean).join(', ')],
+      ['Address', [titleCase(p.address), normalizeCity(p.city), p.zip].filter(Boolean).join(', ')],
       ['APN', p.apn],
       ['Site Area', l.siteAreaSqFt > 0 ? `${fmtNumber(l.siteAreaSqFt)} SF` : ''],
       ['Acres', l.acres > 0 ? fmtAcresNum(l.acres) : ''],
@@ -538,7 +538,7 @@ function compDetailSheets(d) {
       heading(`Comparable #${i + 1}`),
       kv([
         ['Parcel', c.parcel],
-        ['Address', [titleCase(c.address), titleCase(c.city)].filter(Boolean).join(', ')],
+        ['Address', [titleCase(c.address), normalizeCity(c.city)].filter(Boolean).join(', ')],
         ['Sale Date', fmtDate(c.saleDate)],
         ['Sale Price', fmtCurrency(c.price)],
         ['Age', c.age],
@@ -575,8 +575,8 @@ function mapSheet(d) {
     table(
       ['#', 'Parcel', 'Address'],
       [
-        ['S', p.apn || '—', [titleCase(p.address), titleCase(p.city)].filter(Boolean).join(', ') || '—'],
-        ...comps.map((c, i) => [String(i + 1), c.parcel || '—', [titleCase(c.address), titleCase(c.city)].filter(Boolean).join(', ') || '—']),
+        ['S', p.apn || '—', [titleCase(p.address), normalizeCity(p.city)].filter(Boolean).join(', ') || '—'],
+        ...comps.map((c, i) => [String(i + 1), c.parcel || '—', [titleCase(c.address), normalizeCity(c.city)].filter(Boolean).join(', ') || '—']),
       ],
     ),
   ];
@@ -652,7 +652,7 @@ function updateTopBar() {
   const addr = document.getElementById('tb-addr');
   const sub = document.getElementById('tb-sub');
   const val = document.getElementById('tb-value');
-  if (addr) addr.textContent = [titleCase(p.address), titleCase(p.city)].map((v) => (v ?? '').trim()).filter(Boolean).join(', ') || '—';
+  if (addr) addr.textContent = [titleCase(p.address), normalizeCity(p.city)].map((v) => (v ?? '').trim()).filter(Boolean).join(', ') || '—';
   if (sub) sub.textContent = `APN ${p.apn || '—'} · Effective ${fmtDate(p.effectiveDate)}`;
   if (val) val.textContent = fmtCurrency(comp.totalAssessed);
 }

@@ -191,6 +191,22 @@ export function titleCase(s) {
   }).join(' ');
 }
 
+// Normalize a raw county "City" value — which is really a school-district name
+// like "CORONA NORCO USD", "MORENO VALLEY USD", or "PERRIS 2017" — into a clean
+// city name ("Corona", "Moreno Valley", "Perris"). Strips district/year
+// suffixes, collapses "Corona-Norco" to "Corona", then title-cases. Idempotent,
+// so it's safe to apply at both ingestion and display.
+export function normalizeCity(s) {
+  if (s == null) return '';
+  let c = String(s).trim();
+  if (!c) return c;
+  c = c.replace(/CORONA[\s-]*NORCO/gi, 'CORONA');
+  c = c.replace(/\s+(USD|UNIFIED|ELEM|UNION\s+ELEM|UNION)\b/gi, '');
+  c = c.replace(/\s*[-–]?\s*\d{4}\s*$/, '');
+  c = c.replace(/\s{2,}/g, ' ').trim();
+  return titleCase(c);
+}
+
 export function todayISO() {
   const d = new Date();
   const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000);

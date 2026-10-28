@@ -4,7 +4,7 @@
 // ---------------------------------------------------------------------------
 import {
   state, markDirty, computeAppraisal, hasCostData, hasIncomeData,
-  fmtCurrency, fmtCurrencyRounded, fmtNumber, fmtPct, api,
+  fmtCurrency, fmtCurrencyRounded, fmtNumber, fmtPct, normalizeCity, api,
   getLocalComps, clearLocalComps, importLocalComps, scheduleAutosave,
 } from './core.js';
 import { renderReport } from './report.js';
@@ -150,7 +150,9 @@ function numField(label, path, opts = {}) {
   const box = el('div', { class: 'numwrap' });
   if (opts.prefix) box.append(el('span', { class: 'chip-pre' }, opts.prefix));
   const input = el('input', { type: 'number', step: opts.step ?? 'any' });
-  input.value = Number.isFinite(parent[key]) ? parent[key] : 0;
+  // Show blank (not 0) for empty/default numeric fields; a real 0 the user
+  // types still reads back as 0 while editing.
+  input.value = (Number.isFinite(parent[key]) && parent[key] !== 0) ? parent[key] : '';
   input.addEventListener('focus', () => input.select());
   bindInput(input, (v) => { parent[key] = v === '' ? 0 : Number(v); });
   box.append(input);
@@ -231,7 +233,7 @@ function denseInput(path, type = 'text') {
 function denseNum(path) {
   const [parent, key] = resolvePath(path);
   const input = el('input', { class: 'inp', type: 'number', step: 'any' });
-  input.value = Number.isFinite(parent[key]) ? parent[key] : 0;
+  input.value = (Number.isFinite(parent[key]) && parent[key] !== 0) ? parent[key] : '';
   input.addEventListener('focus', () => input.select());
   bindInput(input, (v) => { parent[key] = v === '' ? 0 : Number(v); });
   return input;
@@ -635,7 +637,7 @@ function salesGrid() {
       row('Parcel #', p.apn, comps.map((c) => c.parcel || '—')),
       row('Property Type', imp.type, comps.map((c) => c.propertyType || '—')),
       row('Location', p.address, comps.map((c) => c.address || '—')),
-      row('City', p.city, comps.map((c) => c.city || '—')),
+      row('City', normalizeCity(p.city), comps.map((c) => normalizeCity(c.city) || '—')),
       row('Age', compAge, comps.map((c) => (c.age > 0 ? String(c.age) : '—'))),
       row('Quality', imp.quality, comps.map((c) => c.quality || '—')),
       row('Condition', imp.condition, comps.map((c) => c.condition || '—')),

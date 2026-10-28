@@ -575,7 +575,7 @@ input, select, textarea { font-family: inherit; }
   border: 1px solid var(--border-input);
   background: #fff;
   padding: 2px 4px;
-  font-size: 11px;
+  font-size: 12px;
   border-radius: 0;
   outline: none;
 }
@@ -612,7 +612,7 @@ textarea.inp { height: auto; padding: 4px 6px; resize: vertical; line-height: 1.
   width: 100%;
   min-width: 0;
   padding: 2px 4px;
-  font-size: 11px;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 /* dense label+input grid (Property Summary) */
@@ -1543,7 +1543,9 @@ textarea.inp { height: auto; padding: 4px 6px; resize: vertical; line-height: 1.
   overflow: auto;
   max-height: calc(100vh - 235px);
 }
-.wq-table-wrap .list-table { display: table; min-width: 100%; }
+.wq-table-wrap .list-table { display: table; min-width: 100%; font-size: 13px; }
+.wq-table-wrap .list-table th { font-size: 10px; padding: 7px 10px; }
+.wq-table-wrap .list-table td { padding: 7px 10px; }
 .wq-table-wrap td { border-top: 1px solid var(--border-soft); }
 .wq-table-wrap thead th { position: sticky; top: 0; z-index: 2; }
 .wq-table-wrap thead th.sortable { cursor: pointer; user-select: none; }

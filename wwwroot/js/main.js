@@ -3,7 +3,7 @@
 // Left pane: control bar (dates + APN search) + tabbed form
 // Right pane: report staging. Draggable split handle between them.
 // ---------------------------------------------------------------------------
-import { api, state, saveCurrent, loadAppraisal, newAppraisal, fmtCurrency, fmtNumber, fmtAcresNum, titleCase, fmtDate, computeAppraisal, scheduleAutosave, exportWip, importWip, workspace, activeTab, addTab, closeTab } from './core.js';
+import { api, state, saveCurrent, loadAppraisal, newAppraisal, fmtCurrency, fmtNumber, fmtAcresNum, titleCase, normalizeCity, fmtDate, computeAppraisal, scheduleAutosave, exportWip, importWip, workspace, activeTab, addTab, closeTab } from './core.js';
 import { renderForm, setTab, loadRepo } from './form.js';
 import { renderReport, fitSheets, zoomBy, zoomFit } from './report.js';
 
@@ -136,7 +136,7 @@ export function refreshTopBar() {
   const sub = document.getElementById('tb-sub');
   const val = document.getElementById('tb-value');
   if (addr) addr.textContent = d.property.address || d.property.apn || '—';
-  if (sub) sub.textContent = [d.property.city, d.property.apn].filter(Boolean).join(' · ');
+  if (sub) sub.textContent = [normalizeCity(d.property.city), d.property.apn].filter(Boolean).join(' · ');
   if (val) val.textContent = fmtCurrency(computeAppraisal(d).totalAssessed);
 }
 
@@ -315,7 +315,7 @@ async function showList() {
             : rows.map((r) => el('tr', { class: 'clickable', onclick: () => openById(r.id) },
                 el('td', {}, r.apn || '—'),
                 el('td', {}, r.address || '—'),
-                el('td', {}, r.city || '—'),
+                el('td', {}, normalizeCity(r.city) || '—'),
                 el('td', {}, r.reportDate ? fmtDate(r.reportDate) : '—'),
                 el('td', { class: 'num' }, r.finalValue != null ? fmtCurrency(r.finalValue) : '—'),
                 el('td', {}, r.updatedAt ? new Date(r.updatedAt).toLocaleDateString() : '—'),
@@ -543,6 +543,7 @@ function wqCell(col, val) {
     const n = Number(String(val).replace(/[$,]/g, ''));
     return Number.isFinite(n) ? fmtNumber(n) : String(val);
   }
+  if (col === 'City') return normalizeCity(String(val));
   return titleCase(String(val));
 }
 
@@ -720,7 +721,7 @@ function openFromWorkQueue(type, r) {
   if (r.LocalRatioCd) p.ratioCode = r.LocalRatioCd;
   if (r.ClassCdDescr) d.improvements.primary.type = r.ClassCdDescr;
   if (r.Address) p.address = titleCase(r.Address);
-  if (r.City) p.city = titleCase(r.City);
+  if (r.City) p.city = normalizeCity(r.City);
   // Property characteristics (when the queue file carries the columns) into
   // the Property Summary's Building / Land groups.
   const b = d.improvements.primary;
@@ -748,7 +749,7 @@ function openFromWorkQueue(type, r) {
 function applyTransferCompFields(d, r) {
   const p = d.property;
   if (r.address) p.address = r.address;
-  if (r.city) p.city = r.city;
+  if (r.city) p.city = normalizeCity(r.city);
   if (r.docNumber) p.transferDocumentNumber = r.docNumber;
   if (r.ratioCd) p.ratioCode = r.ratioCd;
   if (r.price) p.salePrice = r.price;
@@ -1006,7 +1007,7 @@ async function showArchive() {
             : rows.map((r) => el('tr', { class: 'clickable', onclick: () => openArchiveDetail(r) },
                 el('td', {}, r.apn || '—'),
                 el('td', {}, r.address || '—'),
-                el('td', {}, r.city || '—'),
+                el('td', {}, normalizeCity(r.city) || '—'),
                 el('td', {}, r.saleDate || '—'),
                 el('td', { class: 'num' }, r.price > 0 ? fmtCurrency(r.price) : '—'),
                 el('td', { class: 'num' }, r.buildingArea > 0 ? Number(r.buildingArea).toLocaleString() : '—'),
@@ -1032,7 +1033,7 @@ function openArchiveDetail(r) {
       ),
       el('div', { class: 'arch-grid' },
         field('Address', r.address),
-        field('City', r.city),
+        field('City', normalizeCity(r.city)),
         field('Property Type', r.propertyType),
         field('Quality', r.quality),
         field('Condition', r.condition),
@@ -1094,7 +1095,7 @@ async function showPinPage(apn) {
       el('div', { class: 'pin-head-left' },
         el('button', { class: 'btn', title: 'Back', onclick: () => history.back() }, '←'),
         el('h2', {}, apn),
-        el('span', { class: 'pin-sub' }, [parcel?.address, parcel?.city, parcel?.class].filter(Boolean).join(' · ')),
+        el('span', { class: 'pin-sub' }, [parcel?.address, normalizeCity(parcel?.city), parcel?.class].filter(Boolean).join(' · ')),
       ),
       el('button', { class: 'btn primary', onclick: () => openAppraisalFromParcel(apn) }, '+ New Appraisal'),
     ),
@@ -1121,7 +1122,7 @@ function renderPinBody(apn, parcel, mine) {
       el('div', { class: 'pin-body-inner' },
         el('div', { class: 'arch-grid pin-grid' },
           pinDetail('Address', titleCase(parcel.address)),
-          pinDetail('City', titleCase(city)),
+          pinDetail('City', normalizeCity(city)),
           pinDetail('Class', titleCase(parcel.class_code)),
           pinDetail('Acreage', fmtAcresNum(parcel.acreage)),
           pinDetail('Site SqFt', fmtNumber(Number(String(parcel.SquareFeet).replace(/[^0-9.]/g, '')) || 0)),
@@ -1190,7 +1191,7 @@ function applyParcelFields(d, p) {
   const prop = d.property;
   if (p.address) prop.address = titleCase(p.address);
   const district = String(p.District || '').trim();
-  if (district) prop.city = titleCase(district.split(' ').slice(1).join(' '));
+  if (district) prop.city = normalizeCity(district.split(' ').slice(1).join(' '));
   if (p.LegalDescription) prop.legalDescription = titleCase(p.LegalDescription);
   const b = d.improvements.primary;
   if (p.class_code) b.type = p.class_code;
