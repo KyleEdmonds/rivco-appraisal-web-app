@@ -6,6 +6,7 @@ import {
   state, markDirty, computeAppraisal, hasCostData, hasIncomeData,
   fmtCurrency, fmtCurrencyRounded, fmtNumber, fmtPct, normalizeCity, api,
   getLocalComps, clearLocalComps, importLocalComps, scheduleAutosave,
+  resolveSubjectImageUrl,
 } from './core.js';
 import { renderReport } from './report.js';
 
@@ -285,77 +286,126 @@ function imgBox(title, path) {
 }
 
 // --- subject photo upload (browse / drag-drop / paste) ------------------------
-// Module-level reference to the live drop zone so a single document-level paste
-// handler (bound once) can route pasted images to it without stacking listeners.
+// --- subject image panel (GIS map / upload) -----------------------------------
+// Two-mode image selector: "GIS Map" fetches the cached satellite snapshot,
+// "Upload / Paste" accepts browse, drag-drop, or Ctrl+V. Stores a reference
+// (not base64) in state.data.property.subjectImage.
 let activeImageDrop = null;
 let imagePasteBound = false;
 
-function imageUploadField(title, path) {
-  const [parent, key] = resolvePath(path);
-  const drop = el('div', { class: 'img-drop', tabindex: '0' });
+function subjectImagePanel() {
+  const d = state.data;
+  const p = d.property;
+  const apn = String(p.apn || '').trim();
+  const wrap = el('div', { class: 'img-panel' });
+  const preview = el('div', { class: 'img-panel-preview' });
+  const modeBtns = el('div', { class: 'img-panel-modes' });
+
+  const currentUrl = () => resolveSubjectImageUrl(d);
+
+  const renderPreview = () => {
+    preview.replaceChildren();
+    const url = currentUrl();
+    if (url) {
+      preview.append(el('img', { src: url, alt: 'Subject property' }));
+      const actions = el('div', { class: 'img-panel-actions' });
+      const removeBtn = el('button', { class: 'btn tiny danger' }, 'Remove');
+      removeBtn.onclick = () => { p.subjectImage = null; markDirty(); refreshComputed(); renderPreview(); };
+      actions.append(removeBtn);
+      preview.append(actions);
+    } else {
+      preview.append(el('div', { class: 'img-panel-empty' }, 'No image set'));
+    }
+  };
+
+  // GIS Map button
+  const gisBtn = el('button', { class: 'btn tiny img-mode-btn' }, '🛰 GIS Map');
+  gisBtn.onclick = () => {
+    if (!apn) { toast('Set an APN first', true); return; }
+    p.subjectImage = { source: 'gis' };
+    markDirty(); refreshComputed(); renderPreview();
+  };
+
+  // Upload / Paste button + drop zone
   const fileInput = el('input', { type: 'file', accept: 'image/*' });
   fileInput.style.display = 'none';
-
-  const loadFile = (f) => {
+  const uploadBtn = el('button', { class: 'btn tiny img-mode-btn' }, '📷 Upload / Paste');
+  uploadBtn.onclick = () => fileInput.click();
+  fileInput.onchange = () => {
+    const f = fileInput.files[0];
     if (!f || !f.type || !f.type.startsWith('image/')) return;
-    const r = new FileReader();
-    r.onload = () => { parent[key] = r.result; markDirty(); refreshComputed(); render(); };
-    r.readAsDataURL(f);
+    if (!apn) { toast('Set an APN first', true); return; }
+    const fd = new FormData();
+    fd.append('file', f);
+    fetch(`/api/parcel-photos/${encodeURIComponent(apn)}`, { method: 'POST', body: fd })
+      .then(r => r.json())
+      .then(res => {
+        if (res.saved && res.saved[0]) {
+          p.subjectImage = { source: 'upload', file: res.saved[0] };
+          markDirty(); refreshComputed(); renderPreview();
+        }
+      }).catch(() => toast('Upload failed', true));
+    fileInput.value = '';
   };
 
-  const render = () => {
-    drop.replaceChildren();
-    if (parent[key]) {
-      drop.append(el('img', { class: 'img-drop-preview', src: parent[key] }));
-      const del = el('button', { class: 'btn tiny danger' }, 'Remove');
-      del.onclick = (e) => { e.stopPropagation(); parent[key] = undefined; markDirty(); refreshComputed(); render(); };
-      drop.append(el('div', { class: 'img-drop-actions' }, del));
-    } else {
-      drop.append(el('div', { class: 'img-drop-hint' },
-        el('div', { class: 'img-drop-hint-title' }, 'Add subject photo'),
-        el('div', { class: 'img-drop-hint-sub' }, 'Click to browse · drag & drop · paste (Ctrl+V)'),
-      ));
-    }
+  // Drag & drop onto the preview area
+  preview.ondragover = (e) => { e.preventDefault(); preview.classList.add('drag'); };
+  preview.ondragleave = () => preview.classList.remove('drag');
+  preview.ondrop = (e) => {
+    e.preventDefault(); preview.classList.remove('drag');
+    const f = e.dataTransfer.files[0];
+    if (!f || !f.type || !f.type.startsWith('image/')) return;
+    if (!apn) { toast('Set an APN first', true); return; }
+    const fd = new FormData();
+    fd.append('file', f);
+    fetch(`/api/parcel-photos/${encodeURIComponent(apn)}`, { method: 'POST', body: fd })
+      .then(r => r.json())
+      .then(res => {
+        if (res.saved && res.saved[0]) {
+          p.subjectImage = { source: 'upload', file: res.saved[0] };
+          markDirty(); refreshComputed(); renderPreview();
+        }
+      }).catch(() => toast('Upload failed', true));
   };
 
-  // Browse (upload)
-  drop.onclick = () => fileInput.click();
-  fileInput.onchange = () => { loadFile(fileInput.files[0]); fileInput.value = ''; };
-
-  // Drag & drop
-  drop.ondragover = (e) => { e.preventDefault(); drop.classList.add('drag'); };
-  drop.ondragleave = () => drop.classList.remove('drag');
-  drop.ondrop = (e) => {
-    e.preventDefault();
-    drop.classList.remove('drag');
-    loadFile(e.dataTransfer.files[0]);
-  };
-
-  render();
-  activeImageDrop = { el: drop, loadFile };
-  bindGlobalImagePaste();
-
-  return el('div', { class: 'img-upload' }, el('header', {}, el('span', {}, title)), drop, fileInput);
-}
-
-// Single document-level paste handler (bound once): Ctrl+V anywhere on the cover
-// tab (outside a text field) routes an image to the subject-photo field.
-function bindGlobalImagePaste() {
-  if (imagePasteBound) return;
-  imagePasteBound = true;
-  document.addEventListener('paste', (e) => {
-    const t = e.target;
-    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
-    if (!activeImageDrop || !activeImageDrop.el.isConnected) return;
-    const items = e.clipboardData && e.clipboardData.items;
-    if (!items) return;
-    for (const it of items) {
-      if (it.type && it.type.startsWith('image/')) {
-        const f = it.getAsFile();
-        if (f) { activeImageDrop.loadFile(f); e.preventDefault(); break; }
+  // Paste handler
+  if (!imagePasteBound) {
+    imagePasteBound = true;
+    document.addEventListener('paste', (e) => {
+      const t = e.target;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      const items = e.clipboardData && e.clipboardData.items;
+      if (!items) return;
+      for (const it of items) {
+        if (it.type && it.type.startsWith('image/')) {
+          const f = it.getAsFile();
+          if (f && apn) {
+            const fd = new FormData();
+            fd.append('file', f);
+            fetch(`/api/parcel-photos/${encodeURIComponent(apn)}`, { method: 'POST', body: fd })
+              .then(r => r.json())
+              .then(res => {
+                if (res.saved && res.saved[0]) {
+                  p.subjectImage = { source: 'upload', file: res.saved[0] };
+                  markDirty(); refreshComputed(); renderPreview();
+                }
+              }).catch(() => toast('Upload failed', true));
+            e.preventDefault();
+            break;
+          }
+        }
       }
-    }
-  });
+    });
+  }
+
+  modeBtns.append(gisBtn, uploadBtn);
+  wrap.append(
+    el('div', { class: 'img-panel-head' }, el('span', { class: 'img-panel-title' }, 'Subject Property Image'), modeBtns),
+    preview,
+    fileInput,
+  );
+  renderPreview();
+  return wrap;
 }
 
 function subjectTab() {
@@ -439,13 +489,7 @@ function subjectTab() {
       )
     : null;
 
-  // Images: map + 1 photo
-  const images = el('div', { class: 'img-row' },
-    imgBox('Parcel Map', 'property.mapImageUrl'),
-    imgBox('Property Image', 'property.subjectPhotoUrl'),
-  );
-
-  return [summary, obSection, images];
+  return [summary, obSection];
 }
 
 // --- Sales tab (SalesTab + SalesGrid + CompForm) -------------------------------
@@ -1039,28 +1083,27 @@ function coverTab() {
 
   if (caseType === 'transfer') {
     sections.push(
+      subjectImagePanel(),
       section('Transfer Details', 'Transfer-specific fields shown on the report', null,
         el('div', { class: 'field-grid c4' },
           textField('Transfer Document #', 'property.transferDocumentNumber', { placeholder: 'e.g. 2026-SR00015' }),
           textField('Ratio Code', 'property.ratioCode', { placeholder: 'e.g. STT' }),
-          textField('Parcel Number', 'property.apn'),
           selectField('Property Type', 'improvements.primary.type', TYPE_OPTIONS),
         ),
-        el('div', { class: 'field-grid c2' },
+        el('div', { class: 'field-grid c3' },
           numField('Sale Price', 'property.salePrice', { prefix: '$' }),
           numField('Total Posted', 'cover.totalPosted', { prefix: '$' }),
+          textField('Appraiser ID', 'property.appraiserId', { placeholder: 'e.g. 677' }),
         ),
         el('div', { class: 'field-grid c3' },
-          textField('City', 'property.city'),
-          textField('Appraiser ID', 'property.appraiserId', { placeholder: 'e.g. 677' }),
           textField('Section', 'property.section', { placeholder: 'e.g. Riverside Commercial' }),
         ),
         areaField('Appraiser Notes', 'property.appraiserNotes', 3),
       ),
-      imageUploadField('Subject Property Photo', 'property.subjectPhotoUrl'),
     );
   } else if (caseType === 'appeal') {
     sections.push(
+      subjectImagePanel(),
       section('Appeal Details', 'Appeal-specific fields shown on the report', null,
         el('div', { class: 'field-grid c3' },
           textField('Tax Year', 'property.taxYear'),
@@ -1084,6 +1127,7 @@ function coverTab() {
     );
   } else if (caseType === 'stipulation') {
     sections.push(
+      subjectImagePanel(),
       section('Stipulation Details', 'Stipulation-specific fields shown on the report', null,
         el('div', { class: 'field-grid c3' },
           textField('Stipulation Date', 'property.stipulationDate', { type: 'date' }),
@@ -1117,6 +1161,7 @@ function coverTab() {
     );
   } else if (caseType === 'general') {
     sections.push(
+      subjectImagePanel(),
       section('General Appraisal', 'A valuation as of a specific date — no transfer, appeal, or stipulation', null,
         el('div', { class: 'field-grid c3' },
           textField('Purpose', 'property.purpose', { placeholder: 'e.g. Refinance, estate, insurance, purchase' }),
@@ -1130,7 +1175,6 @@ function coverTab() {
         ),
         areaField('Appraiser Notes', 'property.appraiserNotes', 3),
       ),
-      imageUploadField('Subject Property Photo', 'property.subjectPhotoUrl'),
     );
   }
   return sections;

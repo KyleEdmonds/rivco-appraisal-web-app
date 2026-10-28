@@ -4,7 +4,7 @@
 import {
   state, computeAppraisal, hasCostData, hasIncomeData,
   fmtCurrency, fmtCurrencyRounded, fmtNumber, fmtPct, fmtAcresNum, titleCase, normalizeCity, fmtDate, todayISO,
-  generateReconciliationNarrative,
+  generateReconciliationNarrative, resolveSubjectImageUrl,
 } from './core.js';
 
 function el(tag, attrs = {}, ...children) {
@@ -157,11 +157,12 @@ function transferCover(d, total) {
     el('div', { class: 'trc2-notes' }, p.appraiserNotes || '—'),
   );
 
-  const subjectPhoto = box('Subject Property Photo',
+  const subjUrl = resolveSubjectImageUrl(d);
+  const subjectPhoto = box('Subject Parcel Map',
     el('div', { class: 'trc2-photo' },
-      p.subjectPhotoUrl
-        ? el('img', { src: p.subjectPhotoUrl, alt: 'Subject property' })
-        : el('div', { class: 'trc2-photo-ph' }, 'No photo'),
+      subjUrl
+        ? el('img', { src: subjUrl, alt: 'Subject parcel map' })
+        : el('div', { class: 'trc2-photo-ph' }, 'No map'),
     ),
   );
 
@@ -226,11 +227,12 @@ function generalCover(d, total) {
     el('div', { class: 'trc2-notes' }, p.appraiserNotes || '—'),
   );
 
-  const subjectPhoto = box('Subject Property Photo',
+  const subjUrl = resolveSubjectImageUrl(d);
+  const subjectPhoto = box('Subject Parcel Map',
     el('div', { class: 'trc2-photo' },
-      p.subjectPhotoUrl
-        ? el('img', { src: p.subjectPhotoUrl, alt: 'Subject property' })
-        : el('div', { class: 'trc2-photo-ph' }, 'No photo'),
+      subjUrl
+        ? el('img', { src: subjUrl, alt: 'Subject parcel map' })
+        : el('div', { class: 'trc2-photo-ph' }, 'No map'),
     ),
   );
 
@@ -584,14 +586,10 @@ function subjectPropertySheet(d) {
         ['Appraiser Notes', p.appraiserNotes],
       ]),
     ] : []),
-    heading('Parcel Map'),
-    p.mapImageUrl
-      ? el('div', { class: 'img-cell' }, el('img', { src: p.mapImageUrl, alt: 'Parcel Map' }))
+    heading('Subject Parcel Map'),
+    resolveSubjectImageUrl(d)
+      ? el('div', { class: 'img-cell' }, el('img', { src: resolveSubjectImageUrl(d), alt: 'Subject parcel map' }))
       : el('div', { class: 'img-cell empty' }, el('div', { class: 'img-cap' }, 'No map')),
-    heading('Property Image'),
-    p.subjectPhotoUrl
-      ? el('div', { class: 'img-cell' }, el('img', { src: p.subjectPhotoUrl, alt: 'Property' }))
-      : el('div', { class: 'img-cell empty' }, el('div', { class: 'img-cap' }, 'No photo')),
   ];
 }
 
@@ -636,8 +634,9 @@ function compDetailSheets(d) {
 function mapSheet(d) {
   const p = d.property;
   const comps = (d.sales.comparables || []).filter((c) => c.selected !== false);
-  const img = p.mapImageUrl
-    ? el('div', { class: 'img-cell' }, el('img', { src: p.mapImageUrl, alt: 'Map' }))
+  const subjUrl = resolveSubjectImageUrl(d);
+  const img = subjUrl
+    ? el('div', { class: 'img-cell' }, el('img', { src: subjUrl, alt: 'Map' }))
     : el('div', { class: 'img-cell empty' }, el('div', { class: 'img-cap' }, 'No map'));
   return [
     heading('Map of Comparable Sales'),

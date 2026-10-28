@@ -1119,88 +1119,174 @@ function parseWktPolygon(wkt) {
   return out;
 }
 
-// Web Mercator projection to world fractions [0..1] (matches OSM tiles).
-function mercatorXY(lng, lat) {
-  const x = (lng + 180) / 360;
-  const s = Math.sin((lat * Math.PI) / 180);
-  const y = 0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI);
-  return [x, y];
+// Web Mercator (EPSG:102100) in meters — must match the backend's MercX/MercY
+// so the SVG overlay aligns exactly with the satellite image extent.
+const MERC_K = 20037508.342789244;
+function mercX(lng) { return (lng / 180) * MERC_K; }
+function mercY(lat) {
+  const rad = (lat * Math.PI) / 180;
+  return Math.log(Math.tan(Math.PI / 4 + rad / 2)) * MERC_K / Math.PI;
 }
 
-// Draw the parcel's polygon over an OpenStreetMap basemap. The basemap is a
-// set of OSM tiles positioned in percentages (so the map scales with the
-// column width); the parcel outline is an SVG overlay in the same Web
-// Mercator projection. Returns a wrapper element, or null when the parcel
-// has no usable shape.
+// Draw the parcel's polygon over a cached satellite snapshot (ArcGIS World
+// Imagery, served by /api/parcel-image/{apn}). The backend computes the exact
+// 16:9 image extent from the local WKT shape; we fetch that extent and
+// project the polygon into it. Returns a wrapper element immediately (with a
+// loading state) and fills it in when the extent arrives.
 function drawParcelMap(parcel) {
   const rings = parseWktPolygon(parcel.shape);
-  if (rings.length === 0) return null;
-  let minLng = Infinity, maxLng = -Infinity, minLat = Infinity, maxLat = -Infinity;
-  for (const ring of rings) for (const [lng, lat] of ring) {
-    if (lng < minLng) minLng = lng; if (lng > maxLng) maxLng = lng;
-    if (lat < minLat) minLat = lat; if (lat > maxLat) maxLat = lat;
+  const apn = String(parcel.Account || parcel.apn || '');
+  const wrap = el('div', { class: 'pin-map' });
+  if (rings.length === 0) {
+    wrap.innerHTML = `<div class="pin-map-canvas pin-map-loading">No parcel geometry available.</div>`;
+    return wrap;
   }
-  const padLng = (maxLng - minLng) * 0.25 || 0.0004;
-  const padLat = (maxLat - minLat) * 0.25 || 0.0004;
-  minLng -= padLng; maxLng += padLng; minLat -= padLat; maxLat += padLat;
-
-  const [wx1, wy1] = mercatorXY(minLng, maxLat); // top-left (world fractions)
-  const [wx2, wy2] = mercatorXY(maxLng, minLat); // bottom-right
-  const spanX = wx2 - wx1, spanY = wy2 - wy1;
-  const X = (lng) => ((mercatorXY(lng, 0)[0] - wx1) / spanX) * 100;
-  const Y = (lat) => ((mercatorXY(0, lat)[1] - wy1) / spanY) * 100;
-
-  // Pick the highest zoom whose tile count stays modest (<= 30 requests).
-  let z = 18;
-  const tileCount = (zz) => {
-    const tw = Math.ceil((wx2 - wx1) * 2 ** zz) + 1;
-    const th = Math.ceil((wy2 - wy1) * 2 ** zz) + 1;
-    return tw * th;
-  };
-  while (z > 4 && tileCount(z) > 30) z--;
-
-  const tiles = [];
-  const t0x = Math.floor(wx1 * 2 ** z), t1x = Math.ceil(wx2 * 2 ** z);
-  const t0y = Math.floor(wy1 * 2 ** z), t1y = Math.ceil(wy2 * 2 ** z);
-  for (let tx = t0x; tx <= t1x; tx++) {
-    for (let ty = t0y; ty <= t1y; ty++) {
-      const left = ((tx / 2 ** z - wx1) / spanX) * 100;
-      const top = ((ty / 2 ** z - wy1) / spanY) * 100;
-      const w = (1 / 2 ** z) / spanX * 100;
-      const h = (1 / 2 ** z) / spanY * 100;
-      tiles.push(`<img class="pin-map-tile" src="https://tile.openstreetmap.org/${z}/${tx}/${ty}.png" alt="" loading="lazy" style="left:${left.toFixed(3)}%;top:${top.toFixed(3)}%;width:${w.toFixed(3)}%;height:${h.toFixed(3)}%"/>`);
-    }
+  wrap.innerHTML = `<div class="pin-map-canvas pin-map-loading">Loading map…</div>`;
+  (async () => {
+  let bbox = null;
+  try {
+    const r = await fetch(`/api/parcel-map/${encodeURIComponent(apn)}`);
+    if (r.ok) bbox = (await r.json()).bbox;
+  } catch { /* offline */ }
+  if (!bbox) {
+    wrap.innerHTML = `<div class="pin-map-canvas pin-map-loading">Map unavailable.</div>`;
+    return;
   }
+  const [xmin, ymin, xmax, ymax] = bbox;
+  const X = (lng) => ((mercX(lng) - xmin) / (xmax - xmin)) * 100;
+  const Y = (lat) => ((ymax - mercY(lat)) / (ymax - ymin)) * 100;
 
-  const W = 640, H = 480;
+  const W = 1600, H = 900; // 16:9, matches the image
   const sx = (v) => (v / 100) * W, sy = (v) => (v / 100) * H;
-  const pathFor = (ring) =>
-    ring.map(([lng, lat], i) => `${i === 0 ? 'M' : 'L'}${sx(X(lng)).toFixed(1)} ${sy(Y(lat)).toFixed(1)}`).join(' ') + ' Z';
-  const paths = rings.map((r) =>
-    `<path d="${pathFor(r)}" fill="rgba(30,58,138,0.28)" stroke="#1e3a8a" stroke-width="2.5" stroke-linejoin="round"/>`).join('');
+  // The parcel boundary itself is composited into the image server-side
+  // (?outline=1) so the cover tab and PDF show the same red outline; the SVG
+  // overlay only carries the location dot and the compass.
   let marker = '';
-  if (parcel.lat && parcel.lng) {
-    marker = `<circle cx="${sx(X(parcel.lng)).toFixed(1)}" cy="${sy(Y(parcel.lat)).toFixed(1)}" r="5" fill="#b45309" stroke="#fff" stroke-width="2"/>`;
-  }
   const svg =
     `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Parcel map">` +
-    paths + marker +
-    `<g font-family="sans-serif" font-size="13" font-weight="700" fill="#334155">` +
-    `<text x="${W - 16}" y="20" text-anchor="middle">N</text>` +
-    `<polygon points="${W - 16},24 ${W - 21},34 ${W - 11},34" fill="#334155"/>` +
+    marker +
+    `<g font-family="sans-serif" font-size="28" font-weight="700" fill="#fff" stroke="#000" stroke-width="1">` +
+    `<text x="${W - 34}" y="44" text-anchor="middle">N</text>` +
+    `<polygon points="${W - 34},52 ${W - 44},70 ${W - 24},70" fill="#fff" stroke="none"/>` +
     `</g></svg>`;
 
-  const wrap = el('div', { class: 'pin-map' });
   wrap.innerHTML =
-    `<div class="pin-map-canvas">` + tiles.join('') + svg + `</div>` +
+    `<div class="pin-map-canvas">` +
+    `<img class="pin-map-img" src="/api/parcel-image/${encodeURIComponent(apn)}" alt="Parcel satellite map">` + svg + `</div>` +
     `<div class="pin-map-cap">` +
-    `<span>Parcel Map · ${rings.length} ring${rings.length === 1 ? '' : 's'}</span>` +
+    `<span>Parcel Map · satellite</span>` +
     `<span class="pin-map-cap-right">` +
+    `<button class="btn tiny pin-map-refreshbtn" title="Re-download the satellite image from the GIS server">↻ Refresh</button>` +
     `<button class="btn tiny pin-map-imgbtn" title="Open Google image search for this parcel">🔍 Images</button>` +
-    `<span class="pin-map-attr">© OpenStreetMap</span>` +
+    `<span class="pin-map-attr">Imagery © Esri/World Imagery</span>` +
     `</span></div>`;
   wrap.querySelector('.pin-map-imgbtn').addEventListener('click', () => googleImageSearch(parcel));
+  wrap.querySelector('.pin-map-refreshbtn').addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    btn.textContent = 'Refreshing…';
+    try {
+      const r = await fetch(`/api/parcel-image/${encodeURIComponent(apn)}/refresh`, { method: 'POST' });
+      if (!r.ok) throw new Error();
+      wrap.querySelector('.pin-map-img').src = `/api/parcel-image/${encodeURIComponent(apn)}?ts=${Date.now()}`;
+      toast('Parcel map refreshed');
+    } catch { toast('Refresh failed', true); }
+    finally { btn.disabled = false; btn.textContent = '↻ Refresh'; }
+  });
+  })();
   return wrap;
+}
+
+// User-attached photos for a PIN: thumbnail grid + add button + lightbox.
+// The PIN page is the single place every PIN reference funnels through
+// (landing search, top-bar search, ?pin=, appraisal page), so photos attached
+// here are available wherever the PIN is opened in the app.
+function drawPinPhotos(apn) {
+  const grid = el('div', { class: 'pin-photos' });
+  const fileInput = el('input', { type: 'file', accept: 'image/*', multiple: 'multiple', style: 'display:none' });
+  const addBtn = el('button', { class: 'btn tiny', title: 'Attach photos to this PIN' }, '＋ Add');
+  addBtn.onclick = () => fileInput.click();
+  fileInput.onchange = async () => {
+    const files = [...fileInput.files];
+    fileInput.value = '';
+    if (files.length === 0) return;
+    const fd = new FormData();
+    files.forEach((f) => fd.append('files', f));
+    try {
+      const r = await fetch(`/api/parcel-photos/${encodeURIComponent(apn)}`, { method: 'POST', body: fd });
+      if (!r.ok) throw new Error();
+      toast(`${files.length} photo${files.length > 1 ? 's' : ''} attached to ${apn}`);
+      loadPhotos();
+    } catch { toast('Photo upload failed', true); }
+  };
+  const section = el('div', { class: 'pin-section' },
+    el('div', { class: 'pin-section-title pin-photos-head' }, 'Photos', addBtn),
+    grid,
+    fileInput,
+  );
+
+  async function loadPhotos() {
+    let list = [];
+    try {
+      const r = await fetch(`/api/parcel-photos/${encodeURIComponent(apn)}`);
+      if (r.ok) list = await r.json();
+    } catch { /* offline */ }
+    grid.replaceChildren(...list.map((p, i) => {
+      const t = el('div', { class: 'pin-photo-thumb', title: p.name });
+      t.append(el('img', { src: p.url, alt: p.name, loading: 'lazy' }));
+      t.onclick = () => openPhotoLightbox(list, i, loadPhotos);
+      return t;
+    }));
+    if (list.length === 0) grid.append(el('div', { class: 'r2-none pin-photos-empty' }, 'No photos yet — attach site or condition photos.'));
+  }
+  loadPhotos();
+  return section;
+}
+
+// Full-size photo viewer: prev/next arrows, delete, Esc / backdrop click closes.
+function openPhotoLightbox(photos, index, onChanged) {
+  const box = el('div', { class: 'photo-lightbox' });
+  const img = el('img', { alt: '' });
+  const cap = el('div', { class: 'photo-lightbox-cap' });
+  const prev = el('button', { class: 'photo-lightbox-nav photo-lightbox-prev', title: 'Previous (←)' }, '‹');
+  const next = el('button', { class: 'photo-lightbox-nav photo-lightbox-next', title: 'Next (→)' }, '›');
+  const del = el('button', { class: 'btn tiny photo-lightbox-del', title: 'Delete this photo' }, '🗑 Delete');
+  const close = el('button', { class: 'photo-lightbox-x', title: 'Close (Esc)' }, '×');
+  box.append(img, cap, prev, next, del, close);
+  let i = index;
+  const show = (n) => {
+    i = (n + photos.length) % photos.length;
+    const p = photos[i];
+    img.src = p.url;
+    img.alt = p.name;
+    cap.textContent = `${p.name} · ${p.added}`;
+  };
+  const shut = () => { box.remove(); document.removeEventListener('keydown', onKey); };
+  const onKey = (e) => {
+    if (e.key === 'Escape') shut();
+    else if (e.key === 'ArrowLeft') show(i - 1);
+    else if (e.key === 'ArrowRight') show(i + 1);
+  };
+  prev.onclick = (e) => { e.stopPropagation(); show(i - 1); };
+  next.onclick = (e) => { e.stopPropagation(); show(i + 1); };
+  close.onclick = (e) => { e.stopPropagation(); shut(); };
+  box.onclick = shut;
+  img.onclick = (e) => e.stopPropagation();
+  del.onclick = async (e) => {
+    e.stopPropagation();
+    const p = photos[i];
+    if (!confirm(`Delete ${p.name}?`)) return;
+    try {
+      const r = await fetch(p.url, { method: 'DELETE' });
+      if (!r.ok) throw new Error();
+      photos.splice(i, 1);
+      if (photos.length === 0) { shut(); } else { show(i); }
+      if (onChanged) onChanged();
+    } catch { toast('Delete failed', true); }
+  };
+  document.addEventListener('keydown', onKey);
+  show(i);
+  document.body.append(box);
 }
 
 // Build a Google image-search query for a parcel: the address when present,
@@ -1381,6 +1467,7 @@ function renderPinBody(apn, parcel, mine) {
   const right = el('div', { class: 'pin-col pin-col-side' },
     drawParcelMap(parcel)
       || el('div', { class: 'r2-none' }, 'No parcel shape available for this PIN.'),
+    drawPinPhotos(apn),
     el('div', { class: 'pin-section' },
       el('div', { class: 'pin-section-title' }, `Past Valuations (${mine.length})`),
       mine.length === 0

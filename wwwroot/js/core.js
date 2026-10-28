@@ -4,7 +4,8 @@
 
 const SQFT_PER_ACRE = 43560;
 const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
-const safe = (n) => (Number.isFinite(n) ? n : 0);
+// Coerce to a finite number (county data arrives as strings like "1.760").
+const safe = (n) => { const v = Number(n); return Number.isFinite(v) ? v : 0; };
 
 // --- calculations -----------------------------------------------------------
 
@@ -253,6 +254,7 @@ export function createEmptyParcel(apn) {
       transferDocumentNumber: '', ratioCode: '', salePrice: 0,
       appraiserId: '', section: '', appraiserNotes: '',
       caseType: 'transfer',
+      subjectImage: null, // { source: "gis" } or { source: "upload", file: "..." }
     },
     land: {
       siteAreaSqFt: 0, acres: 0, zoning: '', topography: '', shape: '',
@@ -331,6 +333,42 @@ export function normalizeParcel(parcel) {
   };
 }
 
+// --- subject image resolution -------------------------------------------------
+// Resolves the subjectImage reference to a displayable URL.
+//   { source: "gis" }              → /api/parcel-image/{apn}
+//   { source: "upload", file }     → /api/parcel-photos/{apn}/{file}
+//   legacy base64 data URL         → returned as-is (migration path)
+//   null / undefined               → null (no image)
+export function resolveSubjectImageUrl(data) {
+  const p = data?.property;
+  if (!p) return null;
+  // New reference model
+  if (p.subjectImage) {
+    if (p.subjectImage.source === 'gis' && p.apn) return `/api/parcel-image/${encodeURIComponent(p.apn)}`;
+    if (p.subjectImage.source === 'upload' && p.apn && p.subjectImage.file)
+      return `/api/parcel-photos/${encodeURIComponent(p.apn)}/${encodeURIComponent(p.subjectImage.file)}`;
+    return null;
+  }
+  // Legacy: base64 data URL stored directly
+  if (p.subjectPhotoUrl) return p.subjectPhotoUrl;
+  return null;
+}
+
+// Migrate legacy data: strip base64 subjectPhotoUrl, set subjectImage reference.
+// Called on load so old saved appraisals work with the new model.
+export function migrateSubjectImage(data) {
+  const p = data?.property;
+  if (!p) return;
+  // If already migrated, skip
+  if (p.subjectImage) { delete p.subjectPhotoUrl; delete p.mapImageUrl; return; }
+  // Legacy base64 → discard and default to GIS map (the satellite is always available)
+  if (p.subjectPhotoUrl) {
+    p.subjectImage = { source: 'gis' };
+    delete p.subjectPhotoUrl;
+  }
+  delete p.mapImageUrl;
+}
+
 // --- API ---------------------------------------------------------------------
 
 async function req(url, opts) {
@@ -387,6 +425,7 @@ export async function loadAppraisal(id) {
   const { data } = await api.getAppraisal(id);
   state.id = id;
   state.data = normalizeParcel(data);
+  migrateSubjectImage(state.data);
   state.dirty = false;
 }
 

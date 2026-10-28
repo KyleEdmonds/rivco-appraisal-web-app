@@ -1,4 +1,6 @@
 using Microsoft.Data.Sqlite;
+using System.Drawing;
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -454,6 +456,282 @@ app.MapGet("/api/parcel-search", (string? q) =>
     // APNs are fixed-length digit strings, so ordinal order is numeric order.
     results.Sort((a, b) => String.CompareOrdinal((string)a["apn"]!, (string)b["apn"]!));
     return Results.Ok(results);
+});
+
+// ---------------------------------------------------------------------------
+// Parcel satellite map — a cached World Imagery snapshot of the parcel's
+// bounding box (the same approach as the old Excel macro, minus the Excel
+// flatten hack). The parcel geometry is already local (WKT shape in the
+// master list), so only the imagery is fetched: the first request downloads
+// a 1200x675 PNG from ArcGIS World Imagery and caches it under
+// storage/parcel_maps/; later requests serve the file from disk.
+// ---------------------------------------------------------------------------
+HttpClient MapHttp = new() { Timeout = TimeSpan.FromSeconds(30) };
+MapHttp.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
+SemaphoreSlim MapLock = new(1, 1);
+const double MercK = 20037508.342789244; // Web Mercator (EPSG:102100) half-world
+
+static double MercX(double lng) => lng * MercK / 180.0;
+static double MercY(double lat)
+{
+    var rad = lat * Math.PI / 180.0;
+    var y = Math.Log(Math.Tan(Math.PI / 4 + rad / 2)) * MercK / Math.PI;
+    return Math.Clamp(y, -MercK, MercK);
+}
+
+// Parse a WKT POLYGON/MULTIPOLYGON into rings of (lng, lat) points.
+static List<List<(double Lng, double Lat)>> ParseWktRings(string wkt)
+{
+    var rings = new List<List<(double, double)>>();
+    int depth = 0, ringStart = -1;
+    for (int i = 0; i < wkt.Length; i++)
+    {
+        if (wkt[i] == '(')
+        {
+            depth++;
+            // Always track the start: for MULTIPOLYGON(((...))) the ring's
+            // coordinates begin after the innermost '(', not the second one.
+            ringStart = i + 1;
+        }
+        else if (wkt[i] == ')')
+        {
+            if (depth == 2 && ringStart >= 0)
+            {
+                var ring = new List<(double, double)>();
+                foreach (var part in wkt[ringStart..i].Split(','))
+                {
+                    var nums = part.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                    if (nums.Length >= 2
+                        && double.TryParse(nums[0], NumberStyles.Float, CultureInfo.InvariantCulture, out var x)
+                        && double.TryParse(nums[1], NumberStyles.Float, CultureInfo.InvariantCulture, out var y))
+                        ring.Add((x, y));
+                }
+                if (ring.Count > 0) rings.Add(ring);
+                ringStart = -1;
+            }
+            depth--;
+        }
+    }
+    return rings;
+}
+
+// The exact 16:9 image extent (Web Mercator) the satellite snapshot covers:
+// the parcel bbox padded 50% per side, then expanded to a 16:9 aspect ratio
+// (same logic as the Excel macro's PADDING_FRAC / TARGET_ASPECT).
+static (double Xmin, double Ymin, double Xmax, double Ymax) MapExtent(List<List<(double Lng, double Lat)>> rings)
+{
+    double xmin = double.MaxValue, ymin = double.MaxValue, xmax = double.MinValue, ymax = double.MinValue;
+    foreach (var ring in rings)
+        foreach (var (lng, lat) in ring)
+        {
+            double x = MercX(lng), y = MercY(lat);
+            if (x < xmin) xmin = x; if (x > xmax) xmax = x;
+            if (y < ymin) ymin = y; if (y > ymax) ymax = y;
+        }
+    // Degenerate (point) geometry: give it a small default footprint.
+    if (xmax - xmin < 1e-3 && ymax - ymin < 1e-3)
+    {
+        double cx = (xmin + xmax) / 2, cy = (ymin + ymax) / 2;
+        xmin = cx - 50; xmax = cx + 50; ymin = cy - 50; ymax = cy + 50;
+    }
+    double dx = (xmax - xmin) * 0.5, dy = (ymax - ymin) * 0.5;
+    xmin -= dx; xmax += dx; ymin -= dy; ymax += dy;
+    const double aspect = 16.0 / 9.0;
+    double w = xmax - xmin, h = ymax - ymin;
+    if (w / h > aspect) { double dh = w / aspect - h; ymin -= dh / 2; ymax += dh / 2; }
+    else { double dw = h * aspect - w; xmin -= dw / 2; xmax += dw / 2; }
+    return (xmin, ymin, xmax, ymax);
+}
+
+// The image extent for a parcel (no network needed — geometry is local).
+// Returns null when the APN is invalid or has no geometry.
+JsonObject? ParcelMapExtentJson(string apn)
+{
+    if (!apn.All(char.IsDigit)) return null;
+    var node = LoadParcelIndex().TryGetValue(apn, out var p) ? p : null;
+    var shape = Str(node?["shape"]) ?? "";
+    var rings = ParseWktRings(shape);
+    if (rings.Count == 0) return null;
+    var (xmin, ymin, xmax, ymax) = MapExtent(rings);
+    return new JsonObject {
+        ["apn"] = apn,
+        ["bbox"] = new JsonArray(xmin, ymin, xmax, ymax),
+    };
+}
+
+app.MapGet("/api/parcel-map/{apn}", (string apn) =>
+{
+    var json = ParcelMapExtentJson(apn);
+    return json is null
+        ? Results.NotFound(new { error = "no parcel geometry for " + apn })
+        : Results.Ok(json);
+});
+
+// Download the ArcGIS satellite PNG for the parcel's 16:9 extent, composite
+// the red parcel outline onto it, and cache the result as a single {apn}.png.
+// The file is kept forever after the first download; use /refresh to re-pull.
+async Task<string?> FetchParcelImageAsync(string apn)
+{
+    var dir = Path.Combine(app.Environment.ContentRootPath, "storage", "parcel_maps");
+    Directory.CreateDirectory(dir);
+    var file = Path.Combine(dir, apn + ".png");
+    if (File.Exists(file)) return file;
+
+    var node = LoadParcelIndex().TryGetValue(apn, out var p) ? p : null;
+    var rings = ParseWktRings(Str(node?["shape"]) ?? "");
+    if (rings.Count == 0) return null;
+    var (xmin, ymin, xmax, ymax) = MapExtent(rings);
+
+    await MapLock.WaitAsync();
+    try
+    {
+        if (!File.Exists(file)) // another request may have filled it meanwhile
+        {
+            var url = $"https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/export"
+                + $"?bbox={xmin:R},{ymin:R},{xmax:R},{ymax:R}&bboxSR=102100&imageSR=102100"
+                + "&size=1200,675&format=png32&f=image";
+            using var resp = await MapHttp.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
+            if (!resp.IsSuccessStatusCode)
+            {
+                File.WriteAllText(Path.Combine(dir, "last_error.txt"),
+                    $"HTTP {(int)resp.StatusCode}\nURL: {url}\n{(await resp.Content.ReadAsStringAsync()).Substring(0, 500)}");
+                return null;
+            }
+            var body = await resp.Content.ReadAsByteArrayAsync();
+            using var ms = new MemoryStream(body);
+            using var img = new System.Drawing.Bitmap(ms);
+            using var g = System.Drawing.Graphics.FromImage(img);
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            PointF Pt(ValueTuple<double, double> l)
+            {
+                double mx = MercX(l.Item1);
+                double my = MercY(l.Item2);
+                return new PointF(
+                    (float)((mx - xmin) / (xmax - xmin) * img.Width),
+                    (float)((ymax - my) / (ymax - ymin) * img.Height));
+            }
+            foreach (var ring in rings)
+            {
+                var pts = ring.Select(Pt).ToArray();
+                if (pts.Length < 3) continue;
+                using (var fill = new System.Drawing.SolidBrush(Color.FromArgb(46, 220, 38, 38)))
+                    g.FillPolygon(fill, pts);
+                using (var pen = new System.Drawing.Pen(Color.FromArgb(255, 220, 38, 38), 4f)
+                {
+                    DashStyle = System.Drawing.Drawing2D.DashStyle.Custom,
+                    DashPattern = new float[] { 8f, 5f },
+                    StartCap = System.Drawing.Drawing2D.LineCap.Round,
+                    EndCap = System.Drawing.Drawing2D.LineCap.Round,
+                })
+                    g.DrawPolygon(pen, pts);
+            }
+            await using var fs = File.Create(file + ".tmp");
+            img.Save(fs, System.Drawing.Imaging.ImageFormat.Png);
+            await fs.DisposeAsync();
+            File.Move(file + ".tmp", file);
+        }
+    }
+    catch (Exception ex)
+    {
+        try { File.WriteAllText(Path.Combine(dir, "last_error.txt"), ex.ToString()); } catch { /* ignore */ }
+    }
+    finally { MapLock.Release(); }
+    return File.Exists(file) ? file : null;
+}
+
+
+
+// Serves the cached satellite+outline PNG (downloads & composites on first use).
+app.MapGet("/api/parcel-image/{apn}", async (HttpContext ctx, string apn) =>
+{
+    if (!apn.All(char.IsDigit)) return Results.BadRequest(new { error = "invalid apn" });
+    var file = await FetchParcelImageAsync(apn);
+    if (file is null) return Results.NotFound(new { error = "imagery unavailable" });
+    ctx.Response.Headers["Cache-Control"] = "public, max-age=3600";
+    return Results.File(file, "image/png");
+});
+
+// Force re-download (the ↻ Refresh button). Deletes the cache and re-pulls.
+app.MapPost("/api/parcel-image/{apn}/refresh", async (string apn) =>
+{
+    if (!apn.All(char.IsDigit)) return Results.BadRequest(new { error = "invalid apn" });
+    var dir = Path.Combine(app.Environment.ContentRootPath, "storage", "parcel_maps");
+    var f = Path.Combine(dir, apn + ".png");
+    if (File.Exists(f)) File.Delete(f);
+    var fresh = await FetchParcelImageAsync(apn);
+    return fresh is null ? Results.NotFound(new { error = "imagery unavailable" }) : Results.Ok(new { ok = true });
+});
+
+// ---------------------------------------------------------------------------
+// Parcel photos: user-attached images per APN under storage/parcel_photos/.
+// Shown on the PIN page wherever the PIN is referenced in the app.
+// ---------------------------------------------------------------------------
+string? ParcelPhotosDir(string apn) =>
+    apn.All(char.IsDigit) ? Path.Combine(app.Environment.ContentRootPath, "storage", "parcel_photos", apn) : null;
+
+app.MapGet("/api/parcel-photos/{apn}", (string apn) =>
+{
+    var dir = ParcelPhotosDir(apn);
+    if (dir is null) return Results.BadRequest(new { error = "invalid apn" });
+    var files = Directory.Exists(dir)
+        ? Directory.GetFiles(dir).Where(f => !f.EndsWith(".tmp")).ToList()
+        : new List<string>();
+    var photos = files
+        .Select(f => new
+        {
+            name = Path.GetFileName(f),
+            url = $"/api/parcel-photos/{apn}/{Uri.EscapeDataString(Path.GetFileName(f))}",
+            size = new FileInfo(f).Length,
+            added = File.GetLastWriteTime(f).ToString("yyyy-MM-dd HH:mm"),
+        })
+        .OrderBy(p => p.added)
+        .ToList();
+    return Results.Ok(photos);
+});
+
+app.MapPost("/api/parcel-photos/{apn}", async (string apn, HttpContext ctx) =>
+{
+    var dir = ParcelPhotosDir(apn);
+    if (dir is null) return Results.BadRequest(new { error = "invalid apn" });
+    if (!ctx.Request.HasFormContentType) return Results.BadRequest(new { error = "expected multipart form" });
+    var form = await ctx.Request.ReadFormAsync();
+    if (form.Files.Count == 0) return Results.BadRequest(new { error = "no files" });
+    Directory.CreateDirectory(dir);
+    var saved = new List<string>();
+    foreach (var f in form.Files)
+    {
+        var ext = Path.GetExtension(f.FileName).ToLowerInvariant();
+        if (ext is not (".jpg" or ".jpeg" or ".png" or ".gif" or ".webp")) ext = ".jpg";
+        var name = $"{DateTime.Now:yyyyMMdd_HHmmss}_{Guid.NewGuid():N}{ext}";
+        await using var fs = File.Create(Path.Combine(dir, name));
+        await f.CopyToAsync(fs);
+        saved.Add(name);
+    }
+    return Results.Ok(new { saved });
+});
+
+app.MapGet("/api/parcel-photos/{apn}/{name}", (string apn, string name) =>
+{
+    var dir = ParcelPhotosDir(apn);
+    if (dir is null || name.Contains('/') || name.Contains('\\') || name.Contains(".."))
+        return Results.BadRequest(new { error = "invalid" });
+    var file = Path.Combine(dir, name);
+    if (!File.Exists(file)) return Results.NotFound(new { error = "not found" });
+    var ct = Path.GetExtension(file).ToLowerInvariant() switch
+    {
+        ".png" => "image/png", ".gif" => "image/gif", ".webp" => "image/webp", _ => "image/jpeg",
+    };
+    return Results.File(file, ct);
+});
+
+app.MapDelete("/api/parcel-photos/{apn}/{name}", (string apn, string name) =>
+{
+    var dir = ParcelPhotosDir(apn);
+    if (dir is null || name.Contains('/') || name.Contains('\\') || name.Contains(".."))
+        return Results.BadRequest(new { error = "invalid" });
+    var file = Path.Combine(dir, name);
+    if (File.Exists(file)) File.Delete(file);
+    return Results.Ok(new { ok = true });
 });
 
 // ---------------------------------------------------------------------------
