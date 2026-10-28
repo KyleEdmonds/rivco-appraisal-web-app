@@ -1118,9 +1118,19 @@ function parseWktPolygon(wkt) {
   return out;
 }
 
-// Draw the parcel's polygon as a self-contained SVG (grid, filled outline,
-// centroid marker, north arrow). Returns a wrapper element, or null when the
-// parcel has no usable shape.
+// Web Mercator projection to world fractions [0..1] (matches OSM tiles).
+function mercatorXY(lng, lat) {
+  const x = (lng + 180) / 360;
+  const s = Math.sin((lat * Math.PI) / 180);
+  const y = 0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI);
+  return [x, y];
+}
+
+// Draw the parcel's polygon over an OpenStreetMap basemap. The basemap is a
+// set of OSM tiles positioned in percentages (so the map scales with the
+// column width); the parcel outline is an SVG overlay in the same Web
+// Mercator projection. Returns a wrapper element, or null when the parcel
+// has no usable shape.
 function drawParcelMap(parcel) {
   const rings = parseWktPolygon(parcel.shape);
   if (rings.length === 0) return null;
@@ -1129,38 +1139,66 @@ function drawParcelMap(parcel) {
     if (lng < minLng) minLng = lng; if (lng > maxLng) maxLng = lng;
     if (lat < minLat) minLat = lat; if (lat > maxLat) maxLat = lat;
   }
-  const padLng = (maxLng - minLng) * 0.18 || 0.0004;
-  const padLat = (maxLat - minLat) * 0.18 || 0.0004;
+  const padLng = (maxLng - minLng) * 0.25 || 0.0004;
+  const padLat = (maxLat - minLat) * 0.25 || 0.0004;
   minLng -= padLng; maxLng += padLng; minLat -= padLat; maxLat += padLat;
-  const W = 560, H = 400;
-  const x = (lng) => ((lng - minLng) / (maxLng - minLng)) * W;
-  const y = (lat) => (H - ((lat - minLat) / (maxLat - minLat)) * H);
-  const pathFor = (ring) =>
-    ring.map(([lng, lat], i) => `${i === 0 ? 'M' : 'L'}${x(lng).toFixed(1)} ${y(lat).toFixed(1)}`).join(' ') + ' Z';
 
-  let grid = '';
-  for (let i = 1; i < 8; i++) {
-    const gx = (W / 8) * i, gy = (H / 8) * i;
-    grid += `<line x1="${gx}" y1="0" x2="${gx}" y2="${H}" stroke="#dbe3ee" stroke-width="1"/>`;
-    grid += `<line x1="0" y1="${gy}" x2="${W}" y2="${gy}" stroke="#dbe3ee" stroke-width="1"/>`;
+  const [wx1, wy1] = mercatorXY(minLng, maxLat); // top-left (world fractions)
+  const [wx2, wy2] = mercatorXY(maxLng, minLat); // bottom-right
+  const spanX = wx2 - wx1, spanY = wy2 - wy1;
+  const X = (lng) => ((mercatorXY(lng, 0)[0] - wx1) / spanX) * 100;
+  const Y = (lat) => ((mercatorXY(0, lat)[1] - wy1) / spanY) * 100;
+
+  // Pick the highest zoom whose tile count stays modest (<= 30 requests).
+  let z = 18;
+  const tileCount = (zz) => {
+    const tw = Math.ceil((wx2 - wx1) * 2 ** zz) + 1;
+    const th = Math.ceil((wy2 - wy1) * 2 ** zz) + 1;
+    return tw * th;
+  };
+  while (z > 4 && tileCount(z) > 30) z--;
+
+  const tiles = [];
+  const t0x = Math.floor(wx1 * 2 ** z), t1x = Math.ceil(wx2 * 2 ** z);
+  const t0y = Math.floor(wy1 * 2 ** z), t1y = Math.ceil(wy2 * 2 ** z);
+  for (let tx = t0x; tx <= t1x; tx++) {
+    for (let ty = t0y; ty <= t1y; ty++) {
+      const left = ((tx / 2 ** z - wx1) / spanX) * 100;
+      const top = ((ty / 2 ** z - wy1) / spanY) * 100;
+      const w = (1 / 2 ** z) / spanX * 100;
+      const h = (1 / 2 ** z) / spanY * 100;
+      tiles.push(`<img class="pin-map-tile" src="https://tile.openstreetmap.org/${z}/${tx}/${ty}.png" alt="" loading="lazy" style="left:${left.toFixed(3)}%;top:${top.toFixed(3)}%;width:${w.toFixed(3)}%;height:${h.toFixed(3)}%"/>`);
+    }
   }
+
+  const W = 640, H = 480;
+  const sx = (v) => (v / 100) * W, sy = (v) => (v / 100) * H;
+  const pathFor = (ring) =>
+    ring.map(([lng, lat], i) => `${i === 0 ? 'M' : 'L'}${sx(X(lng)).toFixed(1)} ${sy(Y(lat)).toFixed(1)}`).join(' ') + ' Z';
   const paths = rings.map((r) =>
-    `<path d="${pathFor(r)}" fill="rgba(30,58,138,0.18)" stroke="#1e3a8a" stroke-width="2" stroke-linejoin="round"/>`).join('');
+    `<path d="${pathFor(r)}" fill="rgba(30,58,138,0.28)" stroke="#1e3a8a" stroke-width="2.5" stroke-linejoin="round"/>`).join('');
   let marker = '';
   if (parcel.lat && parcel.lng) {
-    marker = `<circle cx="${x(parcel.lng).toFixed(1)}" cy="${y(parcel.lat).toFixed(1)}" r="4" fill="#b45309" stroke="#fff" stroke-width="1.5"/>`;
+    marker = `<circle cx="${sx(X(parcel.lng)).toFixed(1)}" cy="${sy(Y(parcel.lat)).toFixed(1)}" r="5" fill="#b45309" stroke="#fff" stroke-width="2"/>`;
   }
   const svg =
     `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Parcel map">` +
-    `<rect x="0" y="0" width="${W}" height="${H}" fill="#eef2f7"/>` +
-    grid + paths + marker +
-    `<g font-family="sans-serif" font-size="12" font-weight="700" fill="#64748b">` +
-    `<text x="${W - 14}" y="18" text-anchor="middle">N</text>` +
-    `<polygon points="${W - 14},22 ${W - 18},30 ${W - 10},30" fill="#64748b"/>` +
+    paths + marker +
+    `<g font-family="sans-serif" font-size="13" font-weight="700" fill="#334155">` +
+    `<text x="${W - 16}" y="20" text-anchor="middle">N</text>` +
+    `<polygon points="${W - 16},24 ${W - 21},34 ${W - 11},34" fill="#334155"/>` +
     `</g></svg>`;
+
   const wrap = el('div', { class: 'pin-map' });
-  wrap.innerHTML = svg +
-    `<div class="pin-map-cap"><span>Parcel Map</span><span>${rings.length} ring${rings.length === 1 ? '' : 's'}</span></div>`;
+  wrap.innerHTML =
+    `<div class="pin-map-canvas">` + tiles.join('') + svg + `</div>` +
+    `<div class="pin-map-cap">` +
+    `<span>Parcel Map · ${rings.length} ring${rings.length === 1 ? '' : 's'}</span>` +
+    `<span class="pin-map-cap-right">` +
+    `<button class="btn tiny pin-map-imgbtn" title="Open Google image search for this parcel">🔍 Images</button>` +
+    `<span class="pin-map-attr">© OpenStreetMap</span>` +
+    `</span></div>`;
+  wrap.querySelector('.pin-map-imgbtn').addEventListener('click', () => googleImageSearch(parcel));
   return wrap;
 }
 
@@ -1224,7 +1262,6 @@ async function showPinPage(apn) {
         el('span', { class: 'pin-sub' }, [parcel?.address, normalizeCity(parcel?.city), parcel?.class].filter(Boolean).join(' · ')),
       ),
       el('div', { class: 'pin-actions' },
-        el('button', { class: 'btn', title: 'Open Google image search for this parcel', onclick: () => googleImageSearch(parcel) }, '🔍 Images'),
         el('span', { class: 'pin-actions-label' }, 'Start a report'),
         el('button', { class: 'btn primary', title: 'Transfer valuation report', onclick: () => openAppraisalFromParcel(apn, 'transfer') }, 'Transfer'),
         el('button', { class: 'btn', title: 'Appeal valuation report', onclick: () => openAppraisalFromParcel(apn, 'appeal') }, 'Appeal'),
@@ -1248,9 +1285,9 @@ function renderPinBody(apn, parcel, mine) {
   const city = String(parcel.District || '').split(' ').slice(1).join(' ');
   const buildings = pinBuildings(parcel);
 
-  // Left (main) column: map, characteristics, buildings, street view.
+  // Left (main) column: characteristics, buildings, sales + tax history,
+  // street view. Right column: the parcel map on its own.
   const left = el('div', { class: 'pin-col pin-col-main' },
-    drawParcelMap(parcel),
     el('div', { class: 'pin-section' },
       el('div', { class: 'pin-section-title' }, 'Characteristics'),
       el('div', { class: 'arch-grid pin-grid' },
@@ -1279,14 +1316,6 @@ function renderPinBody(apn, parcel, mine) {
         ))),
       ))
       : null,
-    parcel.strview ? el('div', { class: 'pin-section' },
-      el('div', { class: 'pin-section-title' }, 'Street View'),
-      el('img', { class: 'pin-strview', src: parcel.strview, alt: 'Street view', loading: 'lazy' }))
-      : null,
-  );
-
-  // Right (side) column: county sales history + past valuations.
-  const right = el('div', { class: 'pin-col pin-col-side' },
     (parcel.sales || []).length > 0 ? el('div', { class: 'pin-section' },
       el('div', { class: 'pin-section-title' }, 'County Sales History'),
       el('table', { class: 'list-table' },
@@ -1299,6 +1328,31 @@ function renderPinBody(apn, parcel, mine) {
         ))),
       ))
       : null,
+    (parcel.history || []).length > 0 ? el('div', { class: 'pin-section' },
+      el('div', { class: 'pin-section-title' }, 'Tax History'),
+      el('table', { class: 'list-table' },
+        el('thead', {}, el('tr', {}, ['Year', 'Type', 'Total Assessed', 'Land', 'Structure', 'Liv. Imp.'].map((h) => el('th', {}, h)))),
+        el('tbody', {}, (parcel.history || []).map((h) => el('tr', {},
+          el('td', {}, h.TaxYear || '—'),
+          el('td', {}, h.EventType || '—'),
+          el('td', { class: 'num' }, fmtNumber(Number(String(h.AssessedTot || '').replace(/[^0-9.]/g, '')) || 0)),
+          el('td', { class: 'num' }, fmtNumber(Number(String(h.AssessedLand || '').replace(/[^0-9.]/g, '')) || 0)),
+          el('td', { class: 'num' }, fmtNumber(Number(String(h.AssessedStructure || '').replace(/[^0-9.]/g, '')) || 0)),
+          el('td', { class: 'num' }, fmtNumber(Number(String(h.AssessedLivImp || '').replace(/[^0-9.]/g, '')) || 0)),
+        ))),
+      ))
+      : null,
+    parcel.strview ? el('div', { class: 'pin-section' },
+      el('div', { class: 'pin-section-title' }, 'Street View'),
+      el('img', { class: 'pin-strview', src: parcel.strview, alt: 'Street view', loading: 'lazy' }))
+      : null,
+  );
+
+  // Right column: the parcel map on its own (with the image-search button in
+  // its caption). Falls back to a placeholder when there is no shape.
+  const right = el('div', { class: 'pin-col pin-col-side' },
+    drawParcelMap(parcel)
+      || el('div', { class: 'r2-none' }, 'No parcel shape available for this PIN.'),
     el('div', { class: 'pin-section' },
       el('div', { class: 'pin-section-title' }, `Past Valuations (${mine.length})`),
       mine.length === 0
@@ -1311,7 +1365,8 @@ function renderPinBody(apn, parcel, mine) {
               el('td', {}, r.updatedAt ? new Date(r.updatedAt).toLocaleDateString() : '—'),
               el('td', {}, el('button', { class: 'btn tiny', onclick: (e) => { e.stopPropagation(); openById(r.id); } }, 'Open')),
             ))),
-        )),
+        ),
+    ),
   );
 
   body.replaceChildren(el('div', { class: 'pin-cols' }, left, right));
