@@ -504,17 +504,17 @@ async function renderTransferQueue(bucket) {
   );
 }
 
-// --- Work queues (transfers_to_be_done / appeals_to_be_done) -------------------
-// A simple, filterable table of a derived "to be done" file in output/.
+// --- Work queues (transfers_to_be_worked / appeals_to_be_done) -----------------
+// A simple, filterable table of a "to be worked" file in input/.
 // Clicking a row opens a new appraisal pre-filled from that row.
 
 const WORK_QUEUE_META = {
-  transfers: { title: 'Transfer Work Queue', file: 'transfers_to_be_done', caseType: 'transfer' },
+  transfers: { title: 'Transfer Work Queue', file: 'transfers_to_be_worked', caseType: 'transfer' },
   appeals: { title: 'Appeal Work Queue', file: 'appeals_to_be_done', caseType: 'appeal' },
 };
 
 // Columns rendered as currency / right-aligned in the work-queue table.
-const WQ_MONEY_COLS = new Set(['StatedSalePrice', 'Price', 'SalePrice', 'Consideration']);
+const WQ_MONEY_COLS = new Set(['StatedSalePrice', 'Price', 'SalePrice', 'Consideration', 'Consid']);
 
 function wqCell(col, val) {
   if (val == null || val === '') return '—';
@@ -556,7 +556,7 @@ async function showWorkQueue(type) {
     if (!body) return;
     if (!data.file) {
       body.replaceChildren(el('div', { class: 'list-empty' },
-        `No ${meta.file} file in output/ yet — drop the .xlsx there and reload.`));
+        `No ${meta.file} file in input/ yet — drop the .csv/.xlsx there and reload.`));
       return;
     }
     const f = (filter || '').trim().toLowerCase();
@@ -578,8 +578,9 @@ async function showWorkQueue(type) {
 }
 
 // Open a new appraisal pre-filled from a work-queue row. Maps the common
-// "to be done" columns (PIN, DocNumber, DocDate, price, ratio, class) onto the
-// appraisal; the case type follows the queue (transfer vs appeal).
+// "to be worked" columns (PIN, DocNumber, DocDate, price, ratio, class,
+// address) onto the appraisal; the case type follows the queue (transfer vs
+// appeal).
 function openFromWorkQueue(type, r) {
   const meta = WORK_QUEUE_META[type] || WORK_QUEUE_META.transfers;
   newAppraisal();
@@ -589,9 +590,12 @@ function openFromWorkQueue(type, r) {
   if (r.PIN) p.apn = r.PIN;
   if (r.DocNumber) p.transferDocumentNumber = r.DocNumber;
   if (r.DocDate) p.effectiveDate = r.DocDate;
-  if (r.StatedSalePrice) p.salePrice = Number(r.StatedSalePrice) || 0;
+  const price = Number(r.Consid ?? r.StatedSalePrice);
+  if (!Number.isNaN(price)) p.salePrice = price;
   if (r.LocalRatioCd) p.ratioCode = r.LocalRatioCd;
   if (r.ClassCdDescr) d.improvements.primary.type = r.ClassCdDescr;
+  if (r.Address) p.address = r.Address;
+  if (r.City) p.city = r.City;
   state.dirty = true;
   addTab({ id: state.id, apn: p.apn, address: d.property.address, dirty: true });
   showAppraisal();

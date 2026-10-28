@@ -71,8 +71,8 @@ First run creates `data/appraisal.db` (SQLite). No data ships with the repo.
 ## Future goals
 
 - **Appeal Work Queue** — the landing page already ships an "Appeal Work Queue" card
-  that reads `output/appeals_to_be_done*.xlsx` and renders the same filterable table as
+  that reads `input/appeals_to_be_done*.xlsx/.csv` and renders the same filterable table as
   the Transfer Work Queue (click a row to open a pre-filled appeal appraisal). It
   currently shows an empty state because no appeals file exists yet. Once an
-  `appeals_to_be_done` file is dropped into `output/`, it populates automatically —
+  `appeals_to_be_done` file is dropped into `input/`, it populates automatically —
   no code change needed.

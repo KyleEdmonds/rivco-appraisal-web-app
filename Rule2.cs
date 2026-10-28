@@ -218,13 +218,18 @@ public static class Rule2
         return idx - 1;
     }
 
-    // Excel serial date -> ISO. Non-numeric values pass through untouched.
+    // Date -> ISO (yyyy-MM-dd). Handles Excel serials and US M/d/yy or
+    // M/d/yyyy strings; anything unrecognizable passes through trimmed.
     public static string ToIsoDate(string? raw)
     {
         if (string.IsNullOrWhiteSpace(raw)) return "";
-        if (double.TryParse(raw, NumberStyles.Any, CultureInfo.InvariantCulture, out var d) && d > 20000 && d < 80000)
+        var s = raw.Trim();
+        if (double.TryParse(s, NumberStyles.Any, CultureInfo.InvariantCulture, out var d) && d > 20000 && d < 80000)
             return new DateTime(1899, 12, 30).AddDays(d).ToString("yyyy-MM-dd");
-        return raw.Trim();
+        if (DateTime.TryParseExact(s, new[] { "M/d/yyyy", "M/d/yy", "MM/dd/yyyy", "MM/dd/yy" },
+                CultureInfo.InvariantCulture, DateTimeStyles.None, out var dt))
+            return dt.ToString("yyyy-MM-dd");
+        return s;
     }
 
     // ------------------------------------------------------------------
@@ -795,26 +800,29 @@ public static class Rule2
             return Results.Ok(list);
         });
 
-        // Work queues: read a derived "to be done" file from output/ and return
-        // its rows as JSON. `type` selects the file prefix:
-        //   transfers -> transfers_to_be_done*.xlsx/.csv
+        // Work queues: read a "to be worked" file from input/ and return its
+        // rows as JSON. `type` selects the file prefix:
+        //   transfers -> transfers_to_be_worked*.xlsx/.csv
         //   appeals   -> appeals_to_be_done*.xlsx/.csv
         // The latest matching file (by last-write time) is used. Columns whose
-        // name contains "Date" are normalized from Excel serials to ISO.
+        // name contains "Date" are normalized to ISO (Excel serials and
+        // M/d/yy). The RivCoViewJSON column (raw county API blob) is excluded
+        // — parcel detail is served by /api/parcel-data/{apn} instead.
+        var inputDir = Path.Combine(contentRoot, "input");
         app.MapGet("/api/workqueue/{type}", (string type) =>
         {
             var prefix = type switch
             {
-                "transfers" => "transfers_to_be_done",
+                "transfers" => "transfers_to_be_worked",
                 "appeals" => "appeals_to_be_done",
                 _ => null
             };
             if (prefix is null)
                 return Results.BadRequest(new { error = "unknown work queue type" });
             var empty = new { file = (string?)null, count = 0, columns = Array.Empty<string>(), rows = Array.Empty<object>() };
-            if (!Directory.Exists(outputDir))
+            if (!Directory.Exists(inputDir))
                 return Results.Ok(empty);
-            var file = Directory.EnumerateFiles(outputDir)
+            var file = Directory.EnumerateFiles(inputDir)
                 .Where(f => Path.GetFileNameWithoutExtension(f).StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
                     && (f.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase) || f.EndsWith(".csv", StringComparison.OrdinalIgnoreCase)))
                 .OrderByDescending(File.GetLastWriteTime)
@@ -824,7 +832,9 @@ public static class Rule2
             List<Dictionary<string, string>> records;
             try { records = ReadFile(file); }
             catch (Exception e) { return Results.BadRequest(new { error = $"parse failed: {e.Message}" }); }
-            var columns = records.Count > 0 ? records[0].Keys.ToList() : new List<string>();
+            var columns = records.Count > 0
+                ? records[0].Keys.Where(c => !c.Equals("RivCoViewJSON", StringComparison.OrdinalIgnoreCase)).ToList()
+                : new List<string>();
             var rows = records.Select(r => (object)new Dictionary<string, string>(
                 columns.ToDictionary(c => c, c =>
                 {
