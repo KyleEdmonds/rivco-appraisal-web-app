@@ -1,4 +1,5 @@
 using Microsoft.Data.Sqlite;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using RivCo;
@@ -329,38 +330,93 @@ app.MapPut("/api/tenant", async (HttpContext ctx) =>
 });
 
 // ---------------------------------------------------------------------------
-// Parcel data — the FULL RivCo (rivcoview) assessment response saved per APN
-// by fetchParcelSizes.cjs (output/parcel_data.json). Served as-is so the UI
-// can use any field (sales history, assessment history, shape, street view,
-// building details, ...). The file is re-read when its mtime changes, so a
-// re-run of the fetch is picked up without restarting the app.
+// Parcel data — the FULL RivCo (rivcoview) assessment response per APN, carried
+// in the RivCoViewJSON column of input/master_parcel_list.csv (the search
+// universe). Served as-is so the UI can use any field (sales history,
+// assessment history, shape, street view, building details, ...). The CSV is
+// re-read when its mtime changes, so a fresh county file is picked up without
+// restarting the app. (Replaces the old output/parcel_data.json cache.)
 // ---------------------------------------------------------------------------
-JsonObject? _parcelData = null;
-DateTime _parcelDataStamp = DateTime.MinValue;
-var _parcelDataLock = new object();
+Dictionary<string, JsonObject>? _parcelIndex = null;
+DateTime _parcelStamp = DateTime.MinValue;
+var _parcelLock = new object();
 
-// Load (and mtime-refresh) the parcel cache. Shared by the parcel-data and
-// parcel-search endpoints.
-JsonObject LoadParcelData()
+// Minimal RFC 4180 CSV parser: handles quoted fields, embedded commas, and
+// doubled quotes ("" -> "). Needed because the RivCoViewJSON column is a large
+// quoted JSON blob — a naive comma-split would corrupt it.
+static List<List<string>> ParseCsv(string text)
 {
-    lock (_parcelDataLock)
+    var records = new List<List<string>>();
+    var record = new List<string>();
+    var field = new StringBuilder();
+    bool inQuotes = false;
+    int i = 0, n = text.Length;
+    while (i < n)
     {
-        var file = Path.Combine(app.Environment.ContentRootPath, "output", "parcel_data.json");
-        var stamp = File.Exists(file) ? new FileInfo(file).LastWriteTimeUtc : DateTime.MinValue;
-        if (_parcelData is null || stamp != _parcelDataStamp)
+        char c = text[i];
+        if (inQuotes)
         {
-            _parcelData = File.Exists(file)
-                ? (JsonNode.Parse(File.ReadAllText(file)) as JsonObject) ?? new JsonObject()
-                : new JsonObject();
-            _parcelDataStamp = stamp;
+            if (c == '"')
+            {
+                if (i + 1 < n && text[i + 1] == '"') { field.Append('"'); i += 2; }
+                else { inQuotes = false; i++; }
+            }
+            else { field.Append(c); i++; }
+        }
+        else
+        {
+            if (c == '"') { inQuotes = true; i++; }
+            else if (c == ',') { record.Add(field.ToString()); field.Clear(); i++; }
+            else if (c == '\r') { i++; if (i < n && text[i] == '\n') i++; record.Add(field.ToString()); field.Clear(); records.Add(record); record = new List<string>(); }
+            else if (c == '\n') { i++; record.Add(field.ToString()); field.Clear(); records.Add(record); record = new List<string>(); }
+            else { field.Append(c); i++; }
         }
     }
-    return _parcelData;
+    if (field.Length > 0 || record.Count > 0) { record.Add(field.ToString()); records.Add(record); }
+    return records;
+}
+
+// Load (and mtime-refresh) the parcel index from the master list CSV. Shared
+// by the parcel-data and parcel-search endpoints.
+Dictionary<string, JsonObject> LoadParcelIndex()
+{
+    lock (_parcelLock)
+    {
+        var file = Path.Combine(app.Environment.ContentRootPath, "input", "master_parcel_list.csv");
+        var stamp = File.Exists(file) ? new FileInfo(file).LastWriteTimeUtc : DateTime.MinValue;
+        if (_parcelIndex is null || stamp != _parcelStamp)
+        {
+            var idx = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
+            if (File.Exists(file))
+            {
+                var records = ParseCsv(File.ReadAllText(file, Encoding.UTF8));
+                if (records.Count > 0)
+                {
+                    var header = records[0];
+                    int pinIdx = header.IndexOf("PIN");
+                    int jsonIdx = header.IndexOf("RivCoViewJSON");
+                    for (int r = 1; r < records.Count && pinIdx >= 0 && jsonIdx >= 0; r++)
+                    {
+                        var row = records[r];
+                        if (row.Count <= jsonIdx) continue;
+                        var apn = row[pinIdx].Trim();
+                        var json = row[jsonIdx];
+                        if (apn.Length == 0 || json.Length == 0) continue;
+                        try { idx[apn] = JsonNode.Parse(json) as JsonObject ?? new JsonObject(); }
+                        catch { /* skip a malformed RivCoViewJSON row */ }
+                    }
+                }
+            }
+            _parcelIndex = idx;
+            _parcelStamp = stamp;
+        }
+    }
+    return _parcelIndex;
 }
 
 app.MapGet("/api/parcel-data/{apn}", (string apn) =>
 {
-    var node = LoadParcelData()[apn];
+    var node = LoadParcelIndex().TryGetValue(apn, out var p) ? p : null;
     return node is null
         ? Results.NotFound(new { error = "no parcel data for " + apn })
         : Results.Ok(node);
@@ -371,7 +427,7 @@ app.MapGet("/api/parcel-data/{apn}", (string apn) =>
 // so the UI can suggest PINs that have no appraisal yet.
 app.MapGet("/api/parcel-search", (string? q) =>
 {
-    var data = LoadParcelData();
+    var data = LoadParcelIndex();
     var query = (q ?? "").Trim();
     if (query.Length == 0) return Results.Ok(new List<Dictionary<string, object?>>());
     var lq = query.ToLowerInvariant();
@@ -380,20 +436,19 @@ app.MapGet("/api/parcel-search", (string? q) =>
     foreach (var (apn, node) in data)
     {
         if (results.Count >= 20) break;
-        if (node is not JsonObject p) continue;
-        var address = Str(p["address"]) ?? "";
+        var address = Str(node["address"]) ?? "";
         var hit = isApn
             ? apn.StartsWith(query, StringComparison.OrdinalIgnoreCase)
             : address.ToLowerInvariant().Contains(lq);
         if (!hit) continue;
-        var district = Str(p["District"]) ?? "";
+        var district = Str(node["District"]) ?? "";
         results.Add(new Dictionary<string, object?>
         {
             ["apn"] = apn,
             ["address"] = address,
             ["city"] = district.Contains(' ') ? district.Split(' ', 2)[1] : "",
-            ["class"] = Str(p["class_code"]) ?? "",
-            ["acreage"] = Str(p["acreage"]) ?? "",
+            ["class"] = Str(node["class_code"]) ?? "",
+            ["acreage"] = Str(node["acreage"]) ?? "",
         });
     }
     // APNs are fixed-length digit strings, so ordinal order is numeric order.

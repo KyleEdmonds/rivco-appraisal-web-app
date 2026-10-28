@@ -6,6 +6,7 @@ obj/
 # Data
 data/
 share/
+storage/
 _edgeprof/
 *.zip
 

@@ -23,4 +23,22 @@
     <None Remove="share\**" />
   </ItemGroup>
 
+  <!-- storage/ is an archive of the data-prep pipeline (scripts + raw/intermediate
+       data, incl. a standalone Program.cs probe). Keep it out of the web build so
+       its top-level Program.cs is not globbed in as a second entry point. -->
+  <ItemGroup>
+    <Compile Remove="storage\**" />
+    <Content Remove="storage\**" />
+    <None Remove="storage\**" />
+  </ItemGroup>
+
+  <!-- output/ is a data folder (parcel_data.json + generated appraisal deliverables).
+       Exclude it from the web build so any stray .cs/.csproj there is not globbed in
+       as a second entry point. -->
+  <ItemGroup>
+    <Compile Remove="output\**" />
+    <Content Remove="output\**" />
+    <None Remove="output\**" />
+  </ItemGroup>
+
 </Project>
