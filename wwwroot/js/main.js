@@ -40,6 +40,10 @@ document.addEventListener('form:rendered', injectCoverSearch);
 
 // --- top bar -----------------------------------------------------------------
 
+// Rule 2 batch is a goal, not yet rebuilt on the new bucketing model — the
+// top-bar button is hidden for now. Flip to true to restore it.
+const RULE2_ENABLED = false;
+
 function renderTopBar() {
   const bar = document.getElementById('topbar');
   bar.replaceChildren(
@@ -63,9 +67,11 @@ function renderTopBar() {
       el('div', { class: 'tb-group' },
         el('button', { class: 'btn', id: 'btn-main', title: 'Back to the main landing page', onclick: goMain }, '← Main'),
       ),
-      el('div', { class: 'tb-group' },
-        el('button', { class: 'btn', id: 'btn-rule2', title: 'Rule 2 batch evaluation and transfer work queues' }, 'Rule 2'),
-      ),
+      ...(RULE2_ENABLED ? [
+        el('div', { class: 'tb-group' },
+          el('button', { class: 'btn', id: 'btn-rule2', title: 'Rule 2 batch evaluation and transfer work queues' }, 'Rule 2'),
+        ),
+      ] : []),
       el('div', { class: 'tb-group' },
         el('button', { class: 'btn', id: 'btn-new' }, '+ New'),
         el('span', { class: 'save-status', id: 'save-status' }, ''),
@@ -80,7 +86,7 @@ function renderTopBar() {
       ),
     ),
   );
-  document.getElementById('btn-rule2').onclick = showRule2;
+  if (RULE2_ENABLED) document.getElementById('btn-rule2').onclick = showRule2;
   document.getElementById('btn-new').onclick = openNew;
   document.getElementById('btn-print').onclick = () => window.print();
   // WIP dropdown: toggle the menu. It closes on outside click via the
@@ -900,7 +906,7 @@ function openArchiveDetail(r) {
 
 // --- PIN page ---------------------------------------------------------------
 // One page per PIN: property characteristics from the county parcel record
-// (output/parcel_data.json), past valuations (appraisals saved for this APN),
+// (input/master_parcel_list.csv), past valuations (appraisals saved for this APN),
 // and a one-click "New Appraisal" pre-filled from the parcel data.
 // Reachable from the top-bar search (parcel suggestions) or ?pin=APN.
 
