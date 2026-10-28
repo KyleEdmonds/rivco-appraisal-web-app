@@ -1544,8 +1544,10 @@ textarea.inp { height: auto; padding: 4px 6px; resize: vertical; line-height: 1.
   max-height: calc(100vh - 235px);
 }
 .wq-table-wrap .list-table { display: table; min-width: 100%; font-size: 13px; }
-.wq-table-wrap .list-table th { font-size: 10px; padding: 7px 10px; }
-.wq-table-wrap .list-table td { padding: 7px 10px; }
+/* Autofit: each column sizes to its widest cell (no wrapping); the table
+   scrolls horizontally when wider than the pane. */
+.wq-table-wrap .list-table th { font-size: 10px; padding: 7px 10px; white-space: nowrap; }
+.wq-table-wrap .list-table td { padding: 7px 10px; white-space: nowrap; }
 .wq-table-wrap td { border-top: 1px solid var(--border-soft); }
 .wq-table-wrap thead th { position: sticky; top: 0; z-index: 2; }
 .wq-table-wrap thead th.sortable { cursor: pointer; user-select: none; }

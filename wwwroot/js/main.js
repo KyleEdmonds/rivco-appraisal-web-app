@@ -520,7 +520,7 @@ const WQ_NUM_COLS = new Set([...WQ_MONEY_COLS, 'BuildingSf', 'Acreage', 'SquareF
 // Hidden by default (toggle via the Columns menu).
 const WQ_HIDDEN_BY_DEFAULT = new Set(['ClassCat', 'MultTransfer', 'PINsInMult', 'SquareFeet']);
 // Dropdown filters: [column, label] — rendered only when the file has the column.
-const WQ_FILTER_COLS = [['ClassCdDescr', 'Class'], ['QueueUser', 'Queue user'], ['Neighborhood', 'Neighborhood']];
+const WQ_FILTER_COLS = [['ClassCdDescr', 'Class'], ['QueueUser', 'Queue user']];
 // Human-readable labels for the raw county column headers (used for the table
 // headers, the Columns menu, and the filter dropdowns).
 const WQ_COL_LABELS = {
