@@ -27,6 +27,25 @@ function toast(msg, isError = false) {
   setTimeout(() => t.remove(), 3000);
 }
 
+// --- theme (light / dark) ----------------------------------------------------
+// Persisted in localStorage; applied to <html data-theme> so the CSS variable
+// overrides in app.css take effect. The toggle button lives in the top bar.
+const THEME_KEY = 'aw-theme';
+function currentTheme() {
+  return localStorage.getItem(THEME_KEY) === 'dark' ? 'dark' : 'light';
+}
+function applyTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  const btn = document.getElementById('btn-theme');
+  if (btn) btn.textContent = theme === 'dark' ? '☀ Light' : '☾ Dark';
+}
+function toggleTheme() {
+  const next = currentTheme() === 'dark' ? 'light' : 'dark';
+  localStorage.setItem(THEME_KEY, next);
+  applyTheme(next);
+}
+applyTheme(currentTheme());
+
 // The cover setup bar's APN/Address search box is injected here (not in
 // form.js) because it needs the navigation callbacks that live in this module.
 // form.js dispatches `form:rendered` after every render; the slot only exists
@@ -55,6 +74,9 @@ function renderTopBar() {
       ),
     ),
     el('div', { class: 'tb-right' },
+      el('div', { class: 'tb-group' },
+        el('button', { class: 'btn theme-toggle', id: 'btn-theme', title: 'Toggle light / dark theme', onclick: toggleTheme }, '☾ Dark'),
+      ),
       el('div', { class: 'tb-headline' },
         el('div', { class: 'addr', id: 'tb-addr' }, '—'),
         el('div', { class: 'sub', id: 'tb-sub' }, ''),
