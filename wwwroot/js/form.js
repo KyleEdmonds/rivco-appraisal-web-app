@@ -6,7 +6,7 @@ import {
   state, markDirty, computeAppraisal, hasCostData, hasIncomeData,
   fmtCurrency, fmtCurrencyRounded, fmtNumber, fmtPct, normalizeCity, titleCase, api,
   getLocalComps, clearLocalComps, importLocalComps, scheduleAutosave,
-  resolveSubjectImageUrl,
+  resolveSubjectImageUrl, rankCompsBySimilarity,
 } from './core.js';
 import { renderReport } from './report.js';
 
@@ -548,6 +548,14 @@ function removeComp(id) {
 //   - local:     CSV-imported comps, machine-local (browser localStorage)
 let repoRecords = [];
 let repoQuery = '';
+let repoCity = '';
+let repoType = '';
+let repoMinPSF = '';
+let repoMaxPSF = '';
+let repoMinDate = '';
+let repoMaxDate = '';
+let repoSortKey = 'similarity';
+let repoSortDir = 'desc';
 
 function repoToast(msg, isError = false) {
   const t = el('div', { class: `toast ${isError ? 'error' : ''}` }, msg);
@@ -568,13 +576,80 @@ async function loadRepo() {
   renderRepoResults();
 }
 
+const repoPSF = (r) => (r.buildingArea > 0 ? (r.price || 0) / r.buildingArea : 0);
+
+function repoSortVal(r, key) {
+  switch (key) {
+    case 'apn': return String(r.apn || '');
+    case 'address': return String(r.address || '');
+    case 'city': return String(r.city || '');
+    case 'saleDate': return String(r.saleDate || '');
+    case 'price': return Number(r.price) || 0;
+    case 'psf': return repoPSF(r);
+    case 'buildingArea': return Number(r.buildingArea) || 0;
+    case 'landArea': return Number(r.landArea) || 0;
+    case 'age': return Number(r.age) || 0;
+    case 'propertyType': return String(r.propertyType || '');
+    case 'similarity': return r.__sim ?? 0;
+    default: return 0;
+  }
+}
+
+function toggleRepoSort(key) {
+  if (repoSortKey === key) {
+    repoSortDir = repoSortDir === 'asc' ? 'desc' : 'asc';
+  } else {
+    repoSortKey = key;
+    repoSortDir = (key === 'similarity' || key === 'price' || key === 'psf') ? 'desc' : 'asc';
+  }
+  renderRepoResults();
+}
+
 function renderRepoResults() {
   const box = document.getElementById('repo-results');
   if (!box) return;
   const q = repoQuery.trim().toLowerCase();
-  const rows = repoRecords
-    .filter((r) => !q || String(r.apn || '').toLowerCase().includes(q) || String(r.address || '').toLowerCase().includes(q))
-    .slice(0, 50);
+  const city = repoCity.trim().toLowerCase();
+  const type = repoType.trim().toLowerCase();
+  const loPSF = repoMinPSF === '' ? null : Number(repoMinPSF);
+  const hiPSF = repoMaxPSF === '' ? null : Number(repoMaxPSF);
+  const loDate = repoMinDate || '';
+  const hiDate = repoMaxDate || '';
+  const selectedApns = new Set(state.data.sales.comparables.map((c) => c.parcel).filter(Boolean));
+
+  // Filter
+  let rows = repoRecords.filter((r) => {
+    if (q && !(String(r.apn || '').toLowerCase().includes(q) || String(r.address || '').toLowerCase().includes(q))) return false;
+    if (city && String(r.city || '').toLowerCase() !== city) return false;
+    if (type && String(r.propertyType || '').toLowerCase() !== type) return false;
+    const psf = repoPSF(r);
+    if (loPSF != null && psf < loPSF) return false;
+    if (hiPSF != null && psf > hiPSF) return false;
+    if (loDate && String(r.saleDate || '') < loDate) return false;
+    if (hiDate && String(r.saleDate || '') > hiDate) return false;
+    return true;
+  });
+
+  // Score similarity against the subject (only when the subject has data).
+  const subject = state.data;
+  const hasSubject = (subject.improvements?.primary?.grossFloorArea || 0) > 0 || subject.property?.city;
+  if (hasSubject) {
+    const ranked = new Map(rankCompsBySimilarity(subject, rows).map((x) => [x.record, x.score]));
+    rows = rows.map((r) => ({ ...r, __sim: ranked.get(r) ?? 0 }));
+  } else {
+    rows = rows.map((r) => ({ ...r, __sim: 0 }));
+  }
+
+  // Sort
+  const dir = repoSortDir === 'asc' ? 1 : -1;
+  rows.sort((a, b) => {
+    const av = repoSortVal(a, repoSortKey);
+    const bv = repoSortVal(b, repoSortKey);
+    if (typeof av === 'string') return av.localeCompare(bv) * dir;
+    return (av - bv) * dir;
+  });
+  rows = rows.slice(0, 100);
+
   if (rows.length === 0) {
     box.replaceChildren(el('div', { class: 'repo-empty' },
       repoRecords.length === 0
@@ -582,32 +657,77 @@ function renderRepoResults() {
         : 'No matches.'));
     return;
   }
-  box.replaceChildren(el('table', {},
-    el('thead', {}, el('tr', {}, ['APN', 'Src', 'Address', 'Sale Date', 'Price', 'Bldg SF', ''].map((h) => el('th', {}, h)))),
-    el('tbody', {}, rows.map((r) => el('tr', {},
+
+  const COLS = [
+    ['similarity', 'Sim'],
+    ['apn', 'APN'],
+    ['address', 'Address'],
+    ['city', 'City'],
+    ['saleDate', 'Sale Date'],
+    ['price', 'Price'],
+    ['psf', '$/SF'],
+    ['buildingArea', 'Bldg SF'],
+    ['landArea', 'Land (Ac)'],
+    ['age', 'Age'],
+    ['propertyType', 'Type'],
+  ];
+
+  const header = el('tr', {},
+    ...COLS.map(([key, label]) => {
+      const th = el('th', { class: `sortable ${repoSortKey === key ? 'sorted' : ''}`, onclick: () => toggleRepoSort(key) },
+        label,
+        el('span', { class: 'sort-ind' }, repoSortKey === key ? (repoSortDir === 'asc' ? '▲' : '▼') : '↕'),
+      );
+      if (key === 'price' || key === 'psf' || key === 'buildingArea' || key === 'landArea' || key === 'similarity') th.style.textAlign = 'right';
+      return th;
+    }),
+    el('th', {}, ''),
+  );
+
+  const body = el('tbody', {}, rows.map((r) => {
+    const isSelected = selectedApns.has(r.apn);
+    const tr = el('tr', { class: isSelected ? 'selected' : '' },
+      el('td', { class: 'sim' }, r.__sim > 0 ? `${Math.round(r.__sim)}%` : '—'),
       el('td', {}, r.apn || '—'),
-      el('td', {}, el('span', { class: `repo-src ${r.origin === 'permanent' ? 'perm' : r.origin === 'transfer' ? 'transfer' : 'local'}` },
-        r.origin === 'permanent' ? 'Perm' : r.origin === 'transfer' ? 'Trans' : 'Local')),
       el('td', {}, r.address || '—'),
+      el('td', {}, r.city || '—'),
       el('td', {}, r.saleDate || '—'),
       el('td', { class: 'num' }, r.price > 0 ? fmtCurrency(r.price) : '—'),
+      el('td', { class: 'num' }, repoPSF(r) > 0 ? repoPSF(r).toFixed(2) : '—'),
       el('td', { class: 'num' }, r.buildingArea > 0 ? fmtNumber(r.buildingArea) : '—'),
-      el('td', {}, el('button', {
-        class: 'btn tiny',
-        onclick: () => {
-          const comp = toComparableSale(r);
-          // Only auto-select if the comp's property type matches the subject's
-          const subjectType = state.data.improvements.primary.type;
-          if (subjectType && r.propertyType && r.propertyType !== subjectType) comp.selected = false;
-          state.data.sales.comparables = [...state.data.sales.comparables, comp];
-          activeCompIdx = state.data.sales.comparables.length - 1;
-          markDirty();
-          renderForm();
-          refreshComputed();
-        },
-      }, '+ Add')),
-    ))),
-  ));
+      el('td', { class: 'num' }, r.landArea > 0 ? r.landArea.toFixed(2) : '—'),
+      el('td', { class: 'num' }, r.age > 0 ? String(r.age) : '—'),
+      el('td', {}, r.propertyType || '—'),
+      el('td', {}, isSelected
+        ? el('button', { class: 'btn tiny danger', onclick: () => removeRepoComp(r.apn) }, 'Remove')
+        : el('button', { class: 'btn tiny', onclick: () => addRepoComp(r) }, '+ Add')),
+    );
+    return tr;
+  }));
+
+  box.replaceChildren(el('table', {}, el('thead', {}, header), body));
+}
+
+function addRepoComp(r) {
+  const comp = toComparableSale(r);
+  const subjectType = state.data.improvements.primary.type;
+  if (subjectType && r.propertyType && r.propertyType !== subjectType) comp.selected = false;
+  state.data.sales.comparables = [...state.data.sales.comparables, comp];
+  activeCompIdx = state.data.sales.comparables.length - 1;
+  markDirty();
+  renderForm();
+  refreshComputed();
+}
+
+function removeRepoComp(apn) {
+  const s = state.data.sales;
+  const idx = s.comparables.findIndex((c) => c.parcel === apn);
+  s.comparables = s.comparables.filter((c) => c.parcel !== apn);
+  if (idx === activeCompIdx) activeCompIdx = Math.max(0, activeCompIdx - 1);
+  else if (idx < activeCompIdx) activeCompIdx -= 1;
+  markDirty();
+  renderForm();
+  refreshComputed();
 }
 
 // CSV import (machine-local only) + clear local comps.
@@ -694,7 +814,7 @@ function salesGrid() {
       row('Unadjusted Price / SF', '', compValues.map((v) => (v.unadjSF > 0 ? v.unadjSF.toFixed(2) : '—'))),
       row('Market Conditions', '', comps.map((c) => pct(c.adjMarketConditions))),
       row('Condition of Sale', '', comps.map((c) => pct(c.adjConditionOfSale))),
-      row('Adjusted Price / SF', '', compValues.map((v) => (v.unadjSF > 0 ? v.unadjSF.toFixed(2) : '—'))),
+      row('Adjusted Price / SF', '', compValues.map((v) => (v.adjSF > 0 ? v.adjSF.toFixed(2) : '—'))),
       row('COMPARABILITY ADJUSTMENTS (%)', null, [], { section: true }),
       ...ADJ_FIELDS.slice(0, 10).map(([f, label]) => row(label, '', comps.map((c) => pct(c[f])))),
       row('NET ADJUSTMENTS', '', compValues.map((v) => (v.net !== 0 ? pct(v.net) : '0%')), { bold: true }),
@@ -826,6 +946,30 @@ function salesTab() {
           value: repoQuery,
           oninput: (e) => { repoQuery = e.target.value; renderRepoResults(); },
         }),
+        el('div', { class: 'repo-filter' },
+          el('label', {}, 'City'),
+          el('input', { value: repoCity, placeholder: 'Any', oninput: (e) => { repoCity = e.target.value; renderRepoResults(); } }),
+        ),
+        el('div', { class: 'repo-filter' },
+          el('label', {}, 'Type'),
+          el('input', { value: repoType, placeholder: 'Any', oninput: (e) => { repoType = e.target.value; renderRepoResults(); } }),
+        ),
+        el('div', { class: 'repo-filter' },
+          el('label', {}, 'Min $/SF'),
+          el('input', { type: 'number', value: repoMinPSF, placeholder: '0', oninput: (e) => { repoMinPSF = e.target.value; renderRepoResults(); } }),
+        ),
+        el('div', { class: 'repo-filter' },
+          el('label', {}, 'Max $/SF'),
+          el('input', { type: 'number', value: repoMaxPSF, placeholder: '∞', oninput: (e) => { repoMaxPSF = e.target.value; renderRepoResults(); } }),
+        ),
+        el('div', { class: 'repo-filter' },
+          el('label', {}, 'From'),
+          el('input', { type: 'date', value: repoMinDate, onchange: (e) => { repoMinDate = e.target.value; renderRepoResults(); } }),
+        ),
+        el('div', { class: 'repo-filter' },
+          el('label', {}, 'To'),
+          el('input', { type: 'date', value: repoMaxDate, onchange: (e) => { repoMaxDate = e.target.value; renderRepoResults(); } }),
+        ),
         el('button', { class: 'btn sm', onclick: () => {
           const comp = newComp();
           s.comparables = [...s.comparables, comp];

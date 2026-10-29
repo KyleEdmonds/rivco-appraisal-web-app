@@ -110,6 +110,69 @@ export function computeSalesGridComp(c) {
   };
 }
 
+// --- comp similarity scoring (ported from src/lib/compSelection.ts) -----------
+// Weighted distance across building SF, cost/SF, age, and location. Each
+// sub-score is in [0,1] where 1 = identical; the weighted average is the
+// overall similarity. Pure and deterministic — no I/O.
+
+const SIM_WEIGHTS = { sf: 0.35, costPerSf: 0.25, age: 0.20, location: 0.20 };
+const SIM_AGE_WINDOW_YEARS = 50;
+
+function simRatioScore(a, b) {
+  if (a <= 0 || b <= 0) return 0;
+  return 1 - Math.abs(a - b) / Math.max(a, b);
+}
+function simAgeScore(subjectAge, compAge) {
+  if (subjectAge < 0 || compAge < 0) return 0;
+  return 1 - Math.min(Math.abs(subjectAge - compAge) / SIM_AGE_WINDOW_YEARS, 1);
+}
+function simLocationScore(subjectCity, compCity) {
+  const s = (subjectCity || '').toLowerCase().trim();
+  const c = (compCity || '').toLowerCase().trim();
+  if (s && c && s === c) return 1.0;
+  return 0.0;
+}
+
+/**
+ * Score a single comp against the subject. Returns a similarity in [0, 1].
+ * `subject` is the live appraisal data; `comp` is a CompRecord (or comparable).
+ */
+export function scoreComp(subject, comp) {
+  const imp = subject.improvements?.primary || {};
+  const p = subject.property || {};
+  const subjectSF = safe(imp.grossFloorArea);
+  const compSF = safe(comp.buildingArea);
+  const subjectCostSf = subjectSF > 0 ? safe((subject.reconciliation?.finalValue || 0) / subjectSF) : 0;
+  const compCostSf = compSF > 0 ? safe(safe(comp.price) / compSF) : 0;
+  const currentYear = new Date().getFullYear();
+  const subjectAge = imp.yearBuilt ? currentYear - imp.yearBuilt : -1;
+
+  const sf = simRatioScore(subjectSF, compSF);
+  const cost = simRatioScore(subjectCostSf, compCostSf);
+  const age = simAgeScore(subjectAge, safe(comp.age));
+  const loc = simLocationScore(p.city, comp.city);
+
+  let totalWeight = 0;
+  let weightedSum = 0;
+  if (subjectSF > 0) { weightedSum += sf * SIM_WEIGHTS.sf; totalWeight += SIM_WEIGHTS.sf; }
+  if (subjectCostSf > 0 && compCostSf > 0) { weightedSum += cost * SIM_WEIGHTS.costPerSf; totalWeight += SIM_WEIGHTS.costPerSf; }
+  if (subjectAge >= 0 && safe(comp.age) >= 0) { weightedSum += age * SIM_WEIGHTS.age; totalWeight += SIM_WEIGHTS.age; }
+  if (p.city) { weightedSum += loc * SIM_WEIGHTS.location; totalWeight += SIM_WEIGHTS.location; }
+
+  if (totalWeight === 0) return 0;
+  return round2((weightedSum / totalWeight) * 100); // percent 0–100
+}
+
+/**
+ * Rank a pool of comps by similarity to the subject (descending).
+ * Returns [{ record, score }] sorted best-first.
+ */
+export function rankCompsBySimilarity(subject, pool) {
+  return pool
+    .map((record) => ({ record, score: scoreComp(subject, record) }))
+    .sort((a, b) => (b.score - a.score) || (String(b.record.saleDate || '').localeCompare(String(a.record.saleDate || ''))));
+}
+
 export function computeReconciliation(data, cost, income, sales) {
   const { costWeight, incomeWeight, salesWeight } = data.reconciliation;
   const includeCost = hasCostData(data);
