@@ -23,7 +23,7 @@
   --border-input: #94a3b8;/* slate-400 (input borders) */
   --panel: #ffffff;
   --danger: #dc2626;
-  /* --- semantic surfaces (theme-switchable) --- */
+  /* --- semantic surfaces --- */
   --surface: #ffffff;            /* card / panel / input background */
   --surface-2: #f8fafc;          /* subtle raised surface */
   --surface-3: #f1f5f9;          /* recessed / hover surface */
@@ -34,30 +34,6 @@
   --line-strong: #cbd5e1;        /* stronger dividers */
   --hover: rgba(30, 41, 59, 0.05);
   --accent-soft: rgba(184, 134, 11, 0.1);
-}
-
-/* --- dark theme ----------------------------------------------------------- */
-:root[data-theme="dark"] {
-  --bg: #0b1220;
-  --bg-soft: #0f172a;
-  --text: #e2e8f0;
-  --muted: #94a3b8;
-  --muted-2: #64748b;
-  --border: #334155;
-  --border-soft: #334155;
-  --border-input: #475569;
-  --panel: #111827;
-  --surface: #111827;
-  --surface-2: #0f172a;
-  --surface-3: #1e293b;
-  --ink: #e2e8f0;
-  --ink-2: #cbd5e1;
-  --ink-3: #94a3b8;
-  --line: #1e293b;
-  --line-strong: #334155;
-  --hover: rgba(148, 163, 184, 0.08);
-  --accent-soft: rgba(212, 168, 67, 0.14);
-  --gold-soft: #2a2410;
 }
 
 * { box-sizing: border-box; }
@@ -82,20 +58,6 @@ input, select, textarea { font-family: inherit; }
 *::-webkit-scrollbar-track { background: transparent; }
 *::-webkit-scrollbar-thumb { background-color: var(--border-soft); border-radius: 9999px; }
 *::-webkit-scrollbar-thumb:hover { background-color: var(--muted-2); }
-
-/* theme toggle (top bar) */
-.theme-toggle {
-  background: transparent;
-  border: 1px solid rgba(255,255,255,0.25);
-  color: #e2e8f0;
-  font-size: 11px;
-  font-weight: 600;
-  padding: 0 10px;
-  height: 28px;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.theme-toggle:hover { background: rgba(255,255,255,0.1); color: #fff; }
 
 /* --- top bar (navy) --- */
 #topbar {
@@ -203,8 +165,8 @@ input, select, textarea { font-family: inherit; }
 .btn.primary:hover { background: var(--navy-dark); }
 .btn.danger { color: #b91c1c; border-color: #fca5a5; background: #fff; }
 .btn.danger:hover { background: #fef2f2; }
-.btn.tiny { padding: 2px 8px; font-size: 11px; height: 22px; }
-.btn.sm { height: 24px; font-size: 10px; padding: 2px 8px; }
+.btn.tiny { padding: 2px 8px; font-size: 12px; height: 24px; }
+.btn.sm { height: 26px; font-size: 11px; padding: 2px 8px; }
 /* top-bar buttons: uniform ghost on navy */
 .tb-right .btn {
   background: rgba(255,255,255,0.06);
@@ -331,6 +293,19 @@ input, select, textarea { font-family: inherit; }
   border-radius: 4px;
 }
 .cover-setup .cs-apn-chip-change:hover { background: var(--bg-soft); border-color: var(--navy); color: var(--navy); }
+/* "View Parcel" — prominent navy action, sits just left of the Change button. */
+.cover-setup .cs-apn-chip-view {
+  flex: 0 0 auto;
+  border: 1px solid var(--navy);
+  background: var(--navy);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 10px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.cover-setup .cs-apn-chip-view:hover { background: var(--navy-dark); }
 /* WIP dropdown */
 .wip-wrap { position: relative; }
 .wip-menu {
@@ -594,7 +569,7 @@ input, select, textarea { font-family: inherit; }
 .tab {
   border: 0;
   background: transparent;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -610,10 +585,10 @@ input, select, textarea { font-family: inherit; }
   min-height: 0;
   overflow-y: auto;
   background: var(--bg-soft);
-  padding: 12px;
+  padding: 10px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
 /* Keep sections at natural height so the pane scrolls instead of
    shrinking the cover-setup bar when a long case section (e.g. Stipulation) is shown. */
@@ -621,44 +596,45 @@ input, select, textarea { font-family: inherit; }
 
 /* --- section boxes (navy header bar) --- */
 .section {
-  border: 2px solid var(--navy);
+  border: 1px solid var(--border-soft);
+  border-top: 3px solid var(--navy);
   background: #fff;
   break-inside: avoid;
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
 }
 .section > header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  background: var(--navy);
-  padding: 4px 10px;
+  background: linear-gradient(180deg, var(--navy) 0%, var(--navy-light) 100%);
+  padding: 7px 12px;
   box-shadow: inset 0 -2px 0 var(--gold);
 }
 .section > header h3 {
   margin: 0;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.1em;
   color: #fff;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.section > header .desc { font-size: 10px; color: var(--muted-2); margin-top: 1px; }
-.section > .section-body { padding: 12px; }
+.section > header .desc { font-size: 11px; color: var(--muted-2); margin-top: 1px; }
+.section > .section-body { padding: 10px 12px; }
 
 /* --- fields --- */
 .field { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .field > label, .field-label {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: #475569;
 }
-.field .hint { font-size: 10px; line-height: 1.2; color: var(--muted-2); }
+.field .hint { font-size: 11px; line-height: 1.2; color: var(--muted-2); }
 .inp {
   height: 24px;
   width: 100%;
@@ -688,7 +664,7 @@ textarea.inp { height: auto; padding: 5px 7px; resize: vertical; line-height: 1.
   align-items: center;
   background: var(--bg);
   padding: 0 7px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--muted);
   flex: 0 0 auto;
@@ -715,12 +691,12 @@ textarea.inp { height: auto; padding: 5px 7px; resize: vertical; line-height: 1.
 .dense-grid.c4 { grid-template-columns: auto minmax(64px, 1fr) auto minmax(64px, 1fr) auto minmax(64px, 1fr) auto minmax(64px, 1fr); gap: 4px 10px; }
 /* Property Summary — logical field groups (label above field) */
 .dg-cell { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.dg-cell-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #475569; line-height: 1.2; }
+.dg-cell-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #475569; line-height: 1.2; }
 .ps-group { margin-bottom: 18px; }
 .ps-group:last-child { margin-bottom: 0; }
 .ps-group-title {
   display: flex; align-items: center; gap: 6px;
-  font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em;
+  font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em;
   color: var(--navy);
   margin-bottom: 10px;
   background: rgba(30, 41, 59, 0.2);
@@ -728,8 +704,8 @@ textarea.inp { height: auto; padding: 5px 7px; resize: vertical; line-height: 1.
 }
 .ps-group-title::before { content: ''; width: 3px; height: 12px; background: var(--gold); flex: 0 0 auto; }
 .ps-group-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 0 16px; }
-.dense-grid .dg-label { font-size: 11px; font-weight: 600; color: #475569; white-space: nowrap; }
-.field-grid { display: grid; gap: 14px 20px; }
+.dense-grid .dg-label { font-size: 12px; font-weight: 600; color: #475569; white-space: nowrap; }
+.field-grid { display: grid; gap: 10px 16px; }
 .field-grid.c2 { grid-template-columns: repeat(2, 1fr); }
 .field-grid.c3 { grid-template-columns: repeat(3, 1fr); }
 .field-grid.c4 { grid-template-columns: repeat(4, 1fr); }
@@ -738,9 +714,9 @@ textarea.inp { height: auto; padding: 5px 7px; resize: vertical; line-height: 1.
 
 /* stipulation value-category table (Cover tab) */
 .vc-wrap { margin-top: 12px; }
-.vc-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.vc-table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .vc-table th, .vc-table td { border: 1px solid var(--border-soft); padding: 4px 8px; text-align: left; }
-.vc-table th { background: var(--bg); font-size: 9px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); font-weight: 700; }
+.vc-table th { background: var(--bg); font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); font-weight: 700; }
 .vc-table td.num, .vc-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .vc-table tr.total td { font-weight: 700; background: var(--bg); }
 
@@ -756,7 +732,7 @@ textarea.inp { height: auto; padding: 5px 7px; resize: vertical; line-height: 1.
   padding: 4px 8px;
 }
 .chip .chip-label {
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -777,7 +753,7 @@ textarea.inp { height: auto; padding: 5px 7px; resize: vertical; line-height: 1.
   background: #fff;
 }
 .sched-row:last-child { border-bottom: 0; }
-.sched-row .s-label { font-size: 12px; color: #475569; }
+.sched-row .s-label { font-size: 13px; color: #475569; }
 .sched-row .s-value { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; color: #1e293b; }
 .sched-row .s-value.neg { color: #dc2626; }
 .sched-row.strong { background: var(--navy); color: #fff; }
@@ -796,7 +772,7 @@ textarea.inp { height: auto; padding: 5px 7px; resize: vertical; line-height: 1.
 }
 .weight-row:last-child { border-bottom: 0; }
 .weight-row .w-left { display: flex; align-items: center; gap: 12px; }
-.weight-row .w-label { width: 170px; font-size: 12px; font-weight: 500; color: #334155; }
+.weight-row .w-label { width: 170px; font-size: 13px; font-weight: 500; color: #334155; }
 .weight-row .w-value { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; color: #1e293b; }
 .weight-row .w-right { display: flex; align-items: center; gap: 6px; }
 .weight-row .w-input {
@@ -811,8 +787,8 @@ textarea.inp { height: auto; padding: 5px 7px; resize: vertical; line-height: 1.
   outline: none;
 }
 .weight-row .w-input:focus { border-color: #1e293b; box-shadow: 0 0 0 1px #1e293b; }
-.weight-row .w-pct { font-size: 12px; color: var(--muted-2); }
-.total-weight { display: flex; justify-content: space-between; margin-top: 8px; font-size: 12px; color: var(--muted); }
+.weight-row .w-pct { font-size: 13px; color: var(--muted-2); }
+.total-weight { display: flex; justify-content: space-between; margin-top: 8px; font-size: 13px; color: var(--muted); }
 .total-weight b { font-variant-numeric: tabular-nums; }
 
 /* final value field (reconcile tab) */
@@ -825,7 +801,7 @@ textarea.inp { height: auto; padding: 5px 7px; resize: vertical; line-height: 1.
   background: var(--bg-soft);
   padding: 6px 10px;
 }
-.final-field .ff-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.final-field .ff-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
 .final-field input {
   width: 104px;
   border: 0;
@@ -846,62 +822,82 @@ textarea.inp { height: auto; padding: 5px 7px; resize: vertical; line-height: 1.
   border: 0;
   background: #fff;
   color: #475569;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   cursor: pointer;
 }
 
 /* --- sales tab --- */
-.repo-panel { border-bottom: 1px solid var(--border-soft); background: var(--bg-soft); padding: 10px; }
-.repo-search { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
-.repo-search input {
-  flex: 1;
-  min-width: 120px;
-  height: 30px;
-  border: 1px solid var(--border-input);
-  padding: 0 10px;
-  font-size: 13px;
-  outline: none;
-}
-.repo-search input:focus { border-color: #1e293b; box-shadow: 0 0 0 1px #1e293b; }
-.repo-search .repo-filter { flex: 0 0 auto; min-width: 90px; }
-.repo-search .repo-filter input, .repo-search .repo-filter select { width: 100%; }
-.repo-search .repo-filter label { display: block; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin-bottom: 2px; }
-.repo-results { max-height: 240px; overflow-y: auto; border: 1px solid var(--border-soft); background: #fff; }
-.repo-results table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.repo-panel { border-bottom: 1px solid var(--border-soft); background: var(--bg-soft); padding: 8px; }
+/* Filter bar: a tidy grid of compact labeled fields (search spans 2 columns). */
+.repo-filters { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 6px 8px; margin-bottom: 8px; }
+.repo-filter-search { grid-column: span 2; }
+.repo-filter { min-width: 0; }
+.repo-filter label { display: block; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin-bottom: 1px; }
+.repo-filter input { width: 100%; height: 26px; border: 1px solid var(--border-input); padding: 0 8px; font-size: 12px; outline: none; background: #fff; }
+.repo-filter input:focus { border-color: #1e293b; box-shadow: 0 0 0 1px #1e293b; }
+/* Action buttons row (below the filters). */
+.repo-actions { display: flex; gap: 8px; margin-bottom: 8px; }
+.repo-results { max-height: 260px; overflow: auto; border: 1px solid var(--border-soft); background: #fff; }
+/* Table fits the pane width (no forced min-width → no horizontal scroll). */
+.repo-results table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .repo-results th {
   position: sticky; top: 0;
   background: var(--navy);
   color: #fff;
-  font-size: 10px;
+  font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   text-align: left;
-  padding: 5px 10px;
+  padding: 5px 8px;
   white-space: nowrap;
 }
 .repo-results th.sortable { cursor: pointer; user-select: none; }
 .repo-results th.sortable:hover { background: var(--navy-dark); }
 .repo-results th .sort-ind { opacity: 0.5; margin-left: 3px; }
 .repo-results th.sorted .sort-ind { opacity: 1; }
-.repo-results td { padding: 5px 10px; border-bottom: 1px solid #e2e8f0; }
+.repo-results td { padding: 4px 6px; border-bottom: 1px solid #e2e8f0; white-space: nowrap; }
+/* Long text columns truncate with an ellipsis so the table fits the pane
+   width without horizontal scrolling. */
+.repo-results td.addr { max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
+.repo-results td.city { max-width: 100px; overflow: hidden; text-overflow: ellipsis; }
+.repo-results td.type { max-width: 110px; overflow: hidden; text-overflow: ellipsis; }
 .repo-results tr:hover td { background: var(--bg); }
 .repo-results tr.selected td { background: var(--gold-soft); font-weight: 600; }
 .repo-results .num { text-align: right; font-variant-numeric: tabular-nums; }
 .repo-results .sim { text-align: right; font-variant-numeric: tabular-nums; font-weight: 700; }
-.repo-empty { padding: 12px; font-size: 12px; color: var(--muted-2); text-align: center; }
+/* Fixed subject reference row: pinned to the top of the scrolling repo grid so
+   the subject's characteristics stay visible while selecting comps. */
+.repo-results tr.subject-row td {
+  position: sticky; top: 0; z-index: 1;
+  background: var(--gold-soft);
+  font-weight: 600;
+  border-bottom: 2px solid var(--gold);
+}
+.repo-results tr.subject-row:hover td { background: var(--gold-soft); }
+.repo-results .subject-badge {
+  font-size: 10px; font-weight: 700; letter-spacing: 0.06em;
+  color: var(--gold); white-space: nowrap;
+}
+.repo-empty { padding: 12px; font-size: 13px; color: var(--muted-2); text-align: center; }
 
 /* sales comparison grid */
-.sales-meta { display: flex; justify-content: space-between; font-size: 13px; color: #475569; margin-bottom: 8px; }
+.sales-meta { display: flex; justify-content: space-between; margin-bottom: 8px; }
+.sales-meta .sm-item { display: inline-flex; align-items: baseline; gap: 6px; }
+.sales-meta .sm-k { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.sales-meta .sm-v { font-size: 13px; font-weight: 600; color: #0f172a; }
 .sales-grid-wrap { border: 1px solid var(--navy-light); overflow-x: auto; }
-.sales-grid { width: 100%; border-collapse: collapse; font-size: 13px; }
+/* Fixed layout: the Description column is fixed-width and the Subject + each
+   Comp column share the remaining space equally, so every data column is the
+   same size. */
+.sales-grid { width: 100%; border-collapse: collapse; font-size: 13px; table-layout: fixed; }
 .sales-grid thead th {
   position: sticky;
   top: 0;
   z-index: 1;
   background: var(--navy);
   color: #fff;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -911,11 +907,8 @@ textarea.inp { height: auto; padding: 5px 7px; resize: vertical; line-height: 1.
   border-right: 2px solid var(--navy-dark);
   white-space: nowrap;
 }
+.sales-grid thead th:first-child { width: 172px; }
 .sales-grid thead th:last-child { border-right: 0; }
-.sales-grid thead th .comp-link { cursor: pointer; }
-.sales-grid thead th .comp-link:hover { text-decoration: underline; }
-.sales-grid thead th .comp-del { cursor: pointer; color: rgba(255,255,255,0.5); margin-left: 6px; }
-.sales-grid thead th .comp-del:hover { color: #f87171; }
 .sales-grid td {
   padding: 4px 10px;
   font-size: 13px;
@@ -924,10 +917,12 @@ textarea.inp { height: auto; padding: 5px 7px; resize: vertical; line-height: 1.
   border-bottom: 1px solid rgba(51, 65, 85, 0.3);
   border-right: 1px solid rgba(51, 65, 85, 0.3);
   font-variant-numeric: tabular-nums;
-  white-space: nowrap;
+  white-space: normal;
+  word-break: break-word;
+  vertical-align: top;
 }
 .sales-grid td:last-child { border-right: 0; }
-.sales-grid td.row-label { background: var(--navy); color: #fff; font-weight: 600; font-size: 12px; }
+.sales-grid td.row-label { background: var(--navy); color: #fff; font-weight: 600; font-size: 13px; }
 .sales-grid td.subject { background: rgba(30, 41, 59, 0.1); font-weight: 700; }
 .sales-grid tr.stripe td:not(.row-label):not(.subject) { background: rgba(30, 41, 59, 0.05); }
 .sales-grid tr.section-row td {
@@ -936,12 +931,23 @@ textarea.inp { height: auto; padding: 5px 7px; resize: vertical; line-height: 1.
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  font-size: 12px;
+  font-size: 13px;
   padding: 5px 10px;
   border-bottom: 2px solid rgba(30, 41, 59, 0.7);
 }
 .sales-grid tr.bold-row td { font-weight: 700; background: rgba(184, 134, 11, 0.1); }
 .sales-grid tr:hover td:not(.row-label):not(.subject) { background: rgba(184, 134, 11, 0.1); }
+/* Subject characteristics summary card (above the sales comparison grid). */
+.subj-summary { border: 1px solid var(--navy-light); margin-bottom: 12px; }
+.subj-summary-head {
+  background: var(--navy); color: #fff; padding: 5px 12px;
+  font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em;
+  box-shadow: inset 0 -2px 0 var(--gold);
+}
+.subj-summary-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--border-soft); }
+.ss-cell { background: #fff; padding: 7px 12px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ss-k { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+.ss-v { font-size: 13px; font-weight: 600; color: #0f172a; word-break: break-word; }
 .sales-correlated {
   border: 1px solid var(--navy-light);
   background: rgba(30, 41, 59, 0.05);
@@ -960,7 +966,7 @@ textarea.inp { height: auto; padding: 5px 7px; resize: vertical; line-height: 1.
 .comp-subtabs { display: flex; border-bottom: 1px solid var(--border-soft); }
 .comp-subtabs button {
   padding: 7px 14px;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 500;
   border: 0;
   border-right: 1px solid var(--border-soft);
@@ -973,9 +979,9 @@ textarea.inp { height: auto; padding: 5px 7px; resize: vertical; line-height: 1.
 .comp-subtabs button.active { background: var(--navy); color: #fff; }
 .comp-form { border: 1px solid var(--border); border-top: 0; padding: 14px; display: flex; flex-direction: column; gap: 14px; }
 .comp-form-head { display: flex; justify-content: space-between; align-items: center; }
-.comp-form-head h3 { margin: 0; font-size: 13px; font-weight: 700; color: #334155; }
+.comp-form-head h3 { margin: 0; font-size: 14px; font-weight: 700; color: #334155; }
 .flag-row { display: flex; gap: 18px; }
-.flag-row label { display: flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; }
+.flag-row label { display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
 
 /* --- right staging: toolbar + sheet stack --- */
 .staging-toolbar {
@@ -1187,6 +1193,40 @@ textarea.inp { height: auto; padding: 5px 7px; resize: vertical; line-height: 1.
 .trc2-photo-empty { border-style: dashed; }
 .trc2-photo img { max-width: 100%; max-height: 100%; object-fit: contain; }
 .trc2-photo-ph { font-size: 11px; color: var(--muted-2); letter-spacing: 0.08em; text-transform: uppercase; }
+
+/* transfer cover — presentable redesign (hero + detail grid + value cards + image strip) */
+.cv-inner { display: flex; flex-direction: column; gap: 22px; height: 100%; }
+.sheet-body .cv-inner { padding: 0; }
+/* Hero headline */
+/* Single row of detail fields (e.g. Transfer Details on the cover).
+   Fields are left-aligned and sized to their content so the row packs
+   together instead of stretching across the full page width. */
+.cv-row { display: flex; flex-wrap: wrap; gap: 10px 48px; }
+.cv-row + .cv-row { margin-top: 12px; }
+.cv-row .cv-field { min-width: 100px; }
+/* Section label */
+.cv-sec { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.12em; color: var(--navy); padding-bottom: 5px; margin-bottom: 12px; border-bottom: 1px solid var(--border-soft); }
+/* Detail grid */
+.cv-field { display: flex; flex-direction: column; gap: 2px; }
+.cv-k { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+.cv-v { font-size: 16px; font-weight: 600; color: #0f172a; font-variant-numeric: tabular-nums; }
+/* Value cards */
+.cv-cards { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; }
+.cv-card { border: 1px solid var(--navy); background: var(--bg-soft); padding: 12px 14px; display: flex; flex-direction: column; gap: 4px; }
+.cv-card-k { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+.cv-card-v { font-size: 20px; font-weight: 700; color: var(--navy); font-variant-numeric: tabular-nums; }
+/* Subject image — full-width satellite photo with a navy section header.
+   The image is shown edge-to-edge at its native 16:9 ratio (no letterboxed
+   gray box), so the parcel outline and surroundings read cleanly. */
+.cv-photo { border: 1px solid var(--navy); background: #fff; display: flex; flex-direction: column; }
+.cv-photo-cap { background: var(--navy); color: #fff; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.12em; padding: 7px 12px; }
+.cv-photo img { display: block; width: 100%; height: auto; }
+.cv-photo-empty { border-style: dashed; }
+.cv-photo-ph { font-size: 12px; color: var(--muted-2); letter-spacing: 0.08em; text-transform: uppercase; padding: 40px 0; }
+/* Notes */
+.cv-notes { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.cv-notes-body { flex: 1; font-size: 13px; line-height: 1.6; color: #475569; }
+
 /* Report image cells (parcel map / property image on the subject sheet) */
 .img-cell { width: 100%; display: flex; align-items: center; justify-content: center; border: 1px solid var(--border-soft); background: #fff; margin: 6px 0 10px; padding: 8px; }
 .img-cell img { max-width: 100%; max-height: 460px; object-fit: contain; }
@@ -1448,22 +1488,32 @@ textarea.inp { height: auto; padding: 5px 7px; resize: vertical; line-height: 1.
 @page { size: letter; margin: 0; }
 @media print {
   @page { size: letter; margin: 0; }
-  html, body { width: 100%; height: auto; overflow: visible; background: #fff; }
-  /* Always print the light palette regardless of the on-screen theme. */
-  :root, :root[data-theme="dark"] {
+  html, body {
+    width: 100%; height: auto; overflow: visible; background: #fff;
+    /* Force backgrounds (navy headers, gold accents) to print even if the
+       browser's default is to strip them. */
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  /* Always print the light palette. */
+  :root {
     --bg: #fff; --bg-soft: #fff; --text: #1e293b; --muted: #64748b; --muted-2: #94a3b8;
     --surface: #fff; --surface-2: #fff; --surface-3: #f1f5f9;
     --ink: #1e293b; --ink-2: #334155; --ink-3: #475569;
     --line: #e2e8f0; --line-strong: #cbd5e1; --border: #1e293b; --border-soft: #cbd5e1;
   }
   #topbar, .pane-left, .split-handle, .staging-toolbar, .toast, #boot-error { display: none !important; }
-  #main, .split, .pane-right { display: block !important; width: 100%; height: auto; }
-  #report-root { display: block !important; overflow: visible !important; padding: 0 !important; gap: 0 !important; }
+  /* The right pane is gray on screen; drop that so no gray shows behind the
+     sheets if the browser scales the content down. */
+  #main, .split, .pane-right { display: block !important; width: 100%; height: auto; background: #fff !important; }
+  #report-root { display: block !important; overflow: visible !important; padding: 0 !important; gap: 0 !important; margin: 0 !important; }
   .sheet-scale { width: auto !important; height: auto !important; overflow: visible !important; }
   .sheet-scale .sheet { transform: none !important; }
   .sheet {
-    width: 8.5in;
-    height: 11in;
+    /* !important so the on-screen inline width (816px) set by fitSheets() can
+       never override the exact page size and cause the browser to scale. */
+    width: 8.5in !important;
+    height: 11in !important;
     margin: 0 auto;
     border: 0;
     box-shadow: none;
@@ -1615,6 +1665,9 @@ textarea.inp { height: auto; padding: 5px 7px; resize: vertical; line-height: 1.
   color: var(--navy);
   letter-spacing: 0.02em;
 }
+/* Archive view: WIP / Final toggle buttons. */
+.archive-toggle { display: inline-flex; gap: 6px; }
+.archive-toggle .btn { padding: 4px 14px; font-size: 12px; font-weight: 600; }
 .list-table {
   width: 100%;
   border-collapse: collapse;
@@ -1638,6 +1691,9 @@ textarea.inp { height: auto; padding: 5px 7px; resize: vertical; line-height: 1.
   color: var(--ink);
 }
 .list-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+/* Numeric column headers right-align to match their (right-aligned) cells so
+   the header text lines up with the values below it. */
+.list-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .list-table tbody tr.clickable { cursor: pointer; }
 .list-table tbody tr.clickable:hover { background: var(--gold-soft); }
 .list-table .btn.tiny { padding: 2px 8px; font-size: 10px; }
@@ -1890,23 +1946,41 @@ tr.tq-done td { color: #94a3b8; }
 }
 .pin-section { margin-top: 14px; }
 .pin-section-title {
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--muted, #64748b);
   margin-bottom: 6px;
 }
+/* PIN page — larger fonts, tables fill the (narrower) left column, clean definition grid. */
+.pin-sub { font-size: 12px; }
+.pin-col .list-table { width: 100%; font-size: 13px; }
+.pin-col .list-table th { font-size: 11px; }
+.pin-col .list-table td { padding: 7px 12px; }
+.pin-col .list-table .btn.tiny { font-size: 11px; }
+/* Past Valuations: cap the height so a long list scrolls (~5 rows visible)
+   instead of pushing the rest of the column down. */
+.pin-scroll { max-height: 190px; overflow-y: auto; border: 1px solid #e2e8f0; border-radius: 4px; }
+.pin-scroll .list-table { margin-top: 0; }
+.pin-scroll .list-table thead th { position: sticky; top: 0; background: var(--navy, #1e293b); z-index: 1; }
+/* Characteristics as a clean definition grid (label/value), not bubbles.
+   auto-fill packs columns to content so there's no empty gap in the middle. */
+.pin-defs { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px 24px; }
+.pin-def { display: flex; flex-direction: column; gap: 2px; }
+.pin-def-k { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted, #64748b); }
+.pin-def-v { font-size: 14px; font-weight: 600; color: var(--ink, #1e293b); word-break: break-word; }
 .pin-strview {
   max-width: 420px;
   width: 100%;
   border: 1px solid var(--line, #e2e8f0);
   border-radius: 4px;
 }
-/* Two-column PIN layout: main (characteristics + history) + side (map + valuations). */
+/* Two-column PIN layout: main (characteristics + history) + side (map + valuations).
+   Left is narrower than the map so the tables fill their column without a big empty gap. */
 .pin-cols {
   display: grid;
-  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
   gap: 14px;
   align-items: start;
 }
@@ -2033,124 +2107,3 @@ tr.tq-done td { color: #94a3b8; }
 @media (max-width: 900px) {
   .pin-cols { grid-template-columns: 1fr; }
 }
-
-/* ===========================================================================
-   DARK THEME — surface & text overrides
-   The base stylesheet uses literal colors for density; this block re-maps the
-   major surfaces/text to the dark palette defined in :root[data-theme=dark].
-   =========================================================================== */
-:root[data-theme="dark"] body { background: var(--bg); color: var(--text); }
-:root[data-theme="dark"] #topbar { background: #0b1220; border-bottom-color: #000; }
-:root[data-theme="dark"] .section { background: var(--surface); border-color: var(--navy-light); box-shadow: 0 1px 3px rgba(0,0,0,0.4); }
-:root[data-theme="dark"] .section > header { background: #1e293b; }
-:root[data-theme="dark"] .section > header .desc { color: var(--muted-2); }
-:root[data-theme="dark"] .field > label, :root[data-theme="dark"] .field-label,
-:root[data-theme="dark"] .dg-cell-label, :root[data-theme="dark"] .dense-grid .dg-label,
-:root[data-theme="dark"] .final-field .ff-label, :root[data-theme="dark"] .repo-search .repo-filter label { color: var(--ink-3); }
-:root[data-theme="dark"] .field .hint { color: var(--muted-2); }
-:root[data-theme="dark"] .inp, :root[data-theme="dark"] .numwrap,
-:root[data-theme="dark"] .weight-row .w-input, :root[data-theme="dark"] .repo-search input { background: var(--surface); color: var(--ink); }
-:root[data-theme="dark"] .inp[readonly] { background: var(--surface-3); color: var(--muted); }
-:root[data-theme="dark"] .numwrap .chip-pre, :root[data-theme="dark"] .numwrap .chip-post { background: var(--surface-3); color: var(--muted); }
-:root[data-theme="dark"] .ps-group-title { color: var(--gold-light); background: rgba(148,163,184,0.12); }
-:root[data-theme="dark"] .sched, :root[data-theme="dark"] .sched-row,
-:root[data-theme="dark"] .weight-row, :root[data-theme="dark"] .final-field { background: var(--surface); }
-:root[data-theme="dark"] .sched-row { border-bottom-color: var(--line); }
-:root[data-theme="dark"] .sched-row .s-label { color: var(--ink-3); }
-:root[data-theme="dark"] .sched-row .s-value { color: var(--ink); }
-:root[data-theme="dark"] .sched-row.strong { background: #1e293b; }
-:root[data-theme="dark"] .weight-row { border-bottom-color: var(--line); }
-:root[data-theme="dark"] .weight-row .w-label { color: var(--ink-2); }
-:root[data-theme="dark"] .weight-row .w-value { color: var(--ink); }
-:root[data-theme="dark"] .final-field { background: var(--surface-2); }
-:root[data-theme="dark"] .final-field input { color: var(--ink); }
-:root[data-theme="dark"] .total-weight { color: var(--muted); }
-:root[data-theme="dark"] .chip { background: var(--surface-2); }
-:root[data-theme="dark"] .chip .chip-label { color: var(--muted); }
-:root[data-theme="dark"] .chip .chip-value { color: var(--ink); }
-:root[data-theme="dark"] .chip.emphasis { background: var(--accent-soft); }
-:root[data-theme="dark"] .chip.emphasis .chip-value { color: var(--gold-light); }
-
-/* sales grid */
-:root[data-theme="dark"] .sales-meta { color: var(--ink-3); }
-:root[data-theme="dark"] .sales-grid-wrap { border-color: var(--navy-light); }
-:root[data-theme="dark"] .sales-grid td { color: var(--ink); border-bottom-color: var(--line); border-right-color: var(--line); }
-:root[data-theme="dark"] .sales-grid td.row-label { background: #1e293b; }
-:root[data-theme="dark"] .sales-grid td.subject { background: rgba(148,163,184,0.12); }
-:root[data-theme="dark"] .sales-grid tr.stripe td:not(.row-label):not(.subject) { background: rgba(148,163,184,0.06); }
-:root[data-theme="dark"] .sales-grid tr.section-row td { background: rgba(148,163,184,0.25); }
-:root[data-theme="dark"] .sales-grid tr.bold-row td { background: var(--accent-soft); }
-:root[data-theme="dark"] .sales-grid tr:hover td:not(.row-label):not(.subject) { background: var(--accent-soft); }
-:root[data-theme="dark"] .sales-correlated { background: var(--surface-2); border-color: var(--navy-light); }
-:root[data-theme="dark"] .sales-correlated .sc-left { color: var(--ink); }
-:root[data-theme="dark"] .sales-correlated .sc-right { color: var(--gold-light); }
-:root[data-theme="dark"] .sales-remarks { color: var(--ink-2); }
-
-/* comp sub-tabs + form */
-:root[data-theme="dark"] .comp-subtabs { border-bottom-color: var(--line-strong); }
-:root[data-theme="dark"] .comp-subtabs button { background: var(--surface); color: var(--ink-3); border-right-color: var(--line-strong); }
-:root[data-theme="dark"] .comp-subtabs button:hover { background: var(--surface-3); }
-:root[data-theme="dark"] .comp-subtabs button.active { background: #1e293b; color: #fff; }
-:root[data-theme="dark"] .comp-form { border-color: var(--border); }
-:root[data-theme="dark"] .comp-form-head h3 { color: var(--ink-2); }
-:root[data-theme="dark"] .flag-row label { color: var(--ink-2); }
-
-/* repo */
-:root[data-theme="dark"] .repo-panel { background: var(--surface-2); }
-:root[data-theme="dark"] .repo-results { background: var(--surface); border-color: var(--line-strong); }
-:root[data-theme="dark"] .repo-results td { border-bottom-color: var(--line); color: var(--ink-2); }
-:root[data-theme="dark"] .repo-results tr:hover td { background: var(--surface-3); }
-:root[data-theme="dark"] .repo-results tr.selected td { background: var(--gold-soft); }
-:root[data-theme="dark"] .repo-empty { color: var(--muted-2); }
-
-/* generic surfaces */
-:root[data-theme="dark"] .btn { background: var(--surface); color: var(--ink); border-color: var(--border-input); }
-:root[data-theme="dark"] .btn:hover { background: var(--surface-3); }
-:root[data-theme="dark"] .tab { background: var(--surface); color: var(--ink-3); }
-:root[data-theme="dark"] .tab:hover { background: var(--surface-3); }
-:root[data-theme="dark"] .tab.active { background: var(--navy); color: #fff; }
-:root[data-theme="dark"] .pane-left, :root[data-theme="dark"] .pane-right { background: var(--bg); }
-:root[data-theme="dark"] .tab-content { background: var(--bg); }
-:root[data-theme="dark"] .ob-row { background: var(--surface); border-color: var(--line-strong); }
-:root[data-theme="dark"] .ob-head { color: var(--ink-2); }
-:root[data-theme="dark"] .vc-table th, :root[data-theme="dark"] .vc-table td { border-color: var(--line-strong); color: var(--ink-2); }
-:root[data-theme="dark"] .vc-table th { background: var(--surface-3); color: var(--muted); }
-:root[data-theme="dark"] .vc-table tr.total td { background: var(--surface-3); }
-:root[data-theme="dark"] .img-box, :root[data-theme="dark"] .img-panel { background: var(--surface); }
-:root[data-theme="dark"] .img-empty, :root[data-theme="dark"] .img-panel-empty { color: var(--muted-2); }
-:root[data-theme="dark"] .toast { background: var(--surface); color: var(--ink); border-color: var(--border-input); }
-:root[data-theme="dark"] .toast.error { background: #2a1215; color: #fca5a5; }
-:root[data-theme="dark"] .landing-head h1 { color: var(--gold-light); }
-:root[data-theme="dark"] .landing-head p { color: var(--muted); }
-:root[data-theme="dark"] .landing-date { background: var(--surface); color: var(--ink); }
-:root[data-theme="dark"] .landing-card { background: var(--surface); border-color: var(--border-input); }
-:root[data-theme="dark"] .landing-card h3 { color: var(--ink); }
-:root[data-theme="dark"] .landing-card p { color: var(--muted); }
-:root[data-theme="dark"] .cover-setup { background: var(--surface); }
-:root[data-theme="dark"] .cs-label { color: var(--muted); }
-:root[data-theme="dark"] .cs-date { background: var(--surface); color: var(--ink); }
-:root[data-theme="dark"] .cs-apn-chip { background: var(--surface-2); }
-:root[data-theme="dark"] .cs-apn-chip-apn { color: var(--gold-light); }
-:root[data-theme="dark"] .cs-apn-chip-addr { color: var(--ink-2); }
-:root[data-theme="dark"] .staging-toolbar { background: #0b1220; }
-:root[data-theme="dark"] .st-btn { color: var(--ink-2); border-color: var(--border-input); }
-:root[data-theme="dark"] .st-btn:hover { background: var(--surface-3); color: #fff; }
-:root[data-theme="dark"] .report-stack, :root[data-theme="dark"] #report-root { background: var(--bg); }
-:root[data-theme="dark"] .sheet { background: #fff; }
-:root[data-theme="dark"] .save-status { color: var(--muted); }
-:root[data-theme="dark"] .wip-menu { background: var(--surface); border-color: var(--border-input); }
-:root[data-theme="dark"] .wip-item { color: var(--ink-2); }
-:root[data-theme="dark"] .wip-item:hover { background: var(--surface-3); }
-:root[data-theme="dark"] .apn-box { background: var(--surface); color: var(--ink); }
-:root[data-theme="dark"] .apn-box input { color: var(--ink); }
-:root[data-theme="dark"] .apn-box input::placeholder { color: var(--muted-2); }
-:root[data-theme="dark"] .apn-count { color: var(--muted); }
-:root[data-theme="dark"] .tb-headline .addr { color: var(--ink); }
-:root[data-theme="dark"] .tb-headline .sub { color: var(--muted); }
-:root[data-theme="dark"] .tb-value .num { color: var(--gold-light); }
-:root[data-theme="dark"] .tb-sep { background: var(--border-input); }
-:root[data-theme="dark"] .split-handle { background: var(--border-input); }
-:root[data-theme="dark"] .tab-bar { background: var(--bg); }
-:root[data-theme="dark"] .tabs-box { background: var(--surface); border-color: var(--border-input); }
-:root[data-theme="dark"] .theme-toggle { background: transparent; border: 1px solid var(--border-input); color: var(--ink-2); }
-:root[data-theme="dark"] .theme-toggle:hover { background: var(--surface-3); color: #fff; }

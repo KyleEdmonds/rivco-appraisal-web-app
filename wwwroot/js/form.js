@@ -4,11 +4,11 @@
 // ---------------------------------------------------------------------------
 import {
   state, markDirty, computeAppraisal, hasCostData, hasIncomeData,
-  fmtCurrency, fmtCurrencyRounded, fmtNumber, fmtPct, normalizeCity, titleCase, api,
+  fmtCurrency, fmtCurrencyRounded, fmtNumber, fmtPct, fmtDate, normalizeCity, titleCase, api,
   getLocalComps, clearLocalComps, importLocalComps, scheduleAutosave,
   resolveSubjectImageUrl, rankCompsBySimilarity,
 } from './core.js';
-import { renderReport } from './report.js';
+import { renderReport, scrollToSection } from './report.js';
 
 const TABS = [
   { id: 'cover', label: 'Cover' },
@@ -589,6 +589,7 @@ function repoSortVal(r, key) {
     case 'buildingArea': return Number(r.buildingArea) || 0;
     case 'landArea': return Number(r.landArea) || 0;
     case 'age': return Number(r.age) || 0;
+    case 'quality': return String(r.quality || '');
     case 'propertyType': return String(r.propertyType || '');
     case 'similarity': return r.__sim ?? 0;
     default: return 0;
@@ -605,6 +606,23 @@ function toggleRepoSort(key) {
   renderRepoResults();
 }
 
+// Parse a free-text date (YYYY-MM-DD or M/D/YYYY, 2- or 4-digit year) into
+// YYYY-MM-DD so it compares correctly against the ISO sale dates. Returns ''
+// when the value is empty or unparseable.
+function parseRepoDate(v) {
+  const s = String(v || '').trim();
+  if (!s) return '';
+  let m = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+  if (m) return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`;
+  m = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})$/);
+  if (m) {
+    let y = m[3];
+    if (y.length === 2) y = (Number(y) > 50 ? '19' : '20') + y;
+    return `${y}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`;
+  }
+  return '';
+}
+
 function renderRepoResults() {
   const box = document.getElementById('repo-results');
   if (!box) return;
@@ -613,8 +631,8 @@ function renderRepoResults() {
   const type = repoType.trim().toLowerCase();
   const loPSF = repoMinPSF === '' ? null : Number(repoMinPSF);
   const hiPSF = repoMaxPSF === '' ? null : Number(repoMaxPSF);
-  const loDate = repoMinDate || '';
-  const hiDate = repoMaxDate || '';
+  const loDate = parseRepoDate(repoMinDate);
+  const hiDate = parseRepoDate(repoMaxDate);
   const selectedApns = new Set(state.data.sales.comparables.map((c) => c.parcel).filter(Boolean));
 
   // Filter
@@ -684,20 +702,44 @@ function renderRepoResults() {
     el('th', {}, ''),
   );
 
-  const body = el('tbody', {}, rows.map((r) => {
+  // Fixed subject row — quick-glance reference for the subject's characteristics
+  // while selecting comps. Always pinned above the comp rows (not filtered/sorted).
+  const p = state.data.property;
+  const imp = state.data.improvements.primary;
+  const land = state.data.land;
+  const hasSubjectData = !!(p.apn || p.address || (imp.grossFloorArea || 0) > 0 || (p.salePrice || 0) > 0);
+  const subjectAge = imp.yearBuilt ? String(new Date().getFullYear() - imp.yearBuilt) : '';
+  const subjectPSF = (imp.grossFloorArea || 0) > 0 && (p.salePrice || 0) > 0 ? p.salePrice / imp.grossFloorArea : 0;
+  const subjectAcres = (land.siteAreaSqFt || 0) / 43560;
+  const subjectRow = hasSubjectData ? el('tr', { class: 'subject-row' },
+    el('td', { class: 'sim' }, '—'),
+    el('td', {}, p.apn || '—'),
+    el('td', { class: 'addr', title: titleCase(p.address) || '' }, titleCase(p.address) || '—'),
+    el('td', { class: 'city', title: normalizeCity(p.city) || '' }, normalizeCity(p.city) || '—'),
+    el('td', {}, '—'),
+    el('td', { class: 'num' }, (p.salePrice || 0) > 0 ? fmtCurrency(p.salePrice) : '—'),
+    el('td', { class: 'num' }, subjectPSF > 0 ? subjectPSF.toFixed(2) : '—'),
+    el('td', { class: 'num' }, (imp.grossFloorArea || 0) > 0 ? fmtNumber(imp.grossFloorArea) : '—'),
+    el('td', { class: 'num' }, subjectAcres > 0 ? subjectAcres.toFixed(2) : '—'),
+    el('td', { class: 'num' }, subjectAge || '—'),
+    el('td', { class: 'type', title: imp.type || '' }, imp.type || '—'),
+    el('td', {}, el('span', { class: 'subject-badge' }, 'SUBJECT')),
+  ) : null;
+
+  const body = el('tbody', {}, subjectRow, rows.map((r) => {
     const isSelected = selectedApns.has(r.apn);
     const tr = el('tr', { class: isSelected ? 'selected' : '' },
       el('td', { class: 'sim' }, r.__sim > 0 ? `${Math.round(r.__sim)}%` : '—'),
       el('td', {}, r.apn || '—'),
-      el('td', {}, r.address || '—'),
-      el('td', {}, r.city || '—'),
-      el('td', {}, r.saleDate || '—'),
+      el('td', { class: 'addr', title: titleCase(r.address) || '' }, titleCase(r.address) || '—'),
+      el('td', { class: 'city', title: normalizeCity(r.city) || '' }, normalizeCity(r.city) || '—'),
+      el('td', {}, r.saleDate ? fmtDate(r.saleDate) : '—'),
       el('td', { class: 'num' }, r.price > 0 ? fmtCurrency(r.price) : '—'),
       el('td', { class: 'num' }, repoPSF(r) > 0 ? repoPSF(r).toFixed(2) : '—'),
       el('td', { class: 'num' }, r.buildingArea > 0 ? fmtNumber(r.buildingArea) : '—'),
       el('td', { class: 'num' }, r.landArea > 0 ? r.landArea.toFixed(2) : '—'),
       el('td', { class: 'num' }, r.age > 0 ? String(r.age) : '—'),
-      el('td', {}, r.propertyType || '—'),
+      el('td', { class: 'type', title: r.propertyType || '' }, r.propertyType || '—'),
       el('td', {}, isSelected
         ? el('button', { class: 'btn tiny danger', onclick: () => removeRepoComp(r.apn) }, 'Remove')
         : el('button', { class: 'btn tiny', onclick: () => addRepoComp(r) }, '+ Add')),
@@ -751,91 +793,6 @@ function onClearLocalComps() {
   clearLocalComps();
   repoToast('Local comps cleared.');
   loadRepo();
-}
-
-// sales comparison grid (SalesGrid.tsx)
-function salesGrid() {
-  const d = state.data;
-  const s = d.sales;
-  const p = d.property;
-  const imp = d.improvements.primary;
-  const land = d.land;
-  const comps = s.comparables;
-
-  const subjectSF = imp.grossFloorArea || 0;
-  const subjectAcres = (land.siteAreaSqFt || 0) / 43560;
-  const subjectRatio = subjectSF > 0 ? (land.siteAreaSqFt || 0) / subjectSF : 0;
-  const compValues = comps.map((c) => {
-    const unadjSF = c.buildingArea > 0 ? c.price / c.buildingArea : 0;
-    const net = ADJ_FIELDS.reduce((sum, [f]) => sum + (Number(c[f]) || 0), 0);
-    const adjSF = unadjSF * (1 + net / 100);
-    const ratio = c.buildingArea > 0 ? (c.landArea || 0) * 43560 / c.buildingArea : 0;
-    return { unadjSF, net, adjSF, ratio };
-  });
-  const pct = (v) => (v !== 0 ? `${v > 0 ? '' : '-'}${Math.abs(v)}%` : '');
-  const compAge = imp.yearBuilt ? String(new Date().getFullYear() - imp.yearBuilt) : '—';
-
-  let rowNum = 0;
-  const row = (label, subject, cells, opts = {}) => {
-    if (opts.section) {
-      return el('tr', { class: 'section-row' }, el('td', { colspan: 2 + comps.length }, label));
-    }
-    const cls = [rowNum++ % 2 === 1 ? 'stripe' : '', opts.bold ? 'bold-row' : ''].filter(Boolean).join(' ');
-    return el('tr', { class: cls },
-      el('td', { class: 'row-label' }, label),
-      el('td', { class: 'subject' }, subject ?? '—'),
-      cells.map((c) => el('td', {}, c ?? '—')),
-    );
-  };
-
-  const table = el('table', { class: 'sales-grid' },
-    el('thead', {}, el('tr', {},
-      el('th', { style: 'width:130px' }, 'Description'),
-      el('th', {}, 'Subject'),
-      comps.map((c, i) => el('th', {},
-        el('span', { class: 'comp-link', onclick: () => { activeCompIdx = i; renderForm(); } }, `Comp ${i + 1}`),
-        el('span', { class: 'comp-del', title: 'Delete comp', onclick: () => removeComp(c.id) }, '✕'),
-      )),
-    )),
-    el('tbody', {},
-      row('Parcel #', p.apn, comps.map((c) => c.parcel || '—')),
-      row('Property Type', imp.type, comps.map((c) => c.propertyType || '—')),
-      row('Location', p.address, comps.map((c) => c.address || '—')),
-      row('City', normalizeCity(p.city), comps.map((c) => normalizeCity(c.city) || '—')),
-      row('Age', compAge, comps.map((c) => (c.age > 0 ? String(c.age) : '—'))),
-      row('Quality', imp.quality, comps.map((c) => c.quality || '—')),
-      row('Condition', imp.condition, comps.map((c) => c.condition || '—')),
-      row('Land Area (Acres)', subjectAcres > 0 ? subjectAcres.toFixed(2) : '—', comps.map((c) => (c.landArea > 0 ? c.landArea.toFixed(2) : '—'))),
-      row('Building Area (SF)', subjectSF > 0 ? fmtNumber(subjectSF) : '—', comps.map((c) => (c.buildingArea > 0 ? fmtNumber(c.buildingArea) : '—'))),
-      row('Land to Bldg. Ratio', subjectRatio > 0 ? subjectRatio.toFixed(2) : '—', compValues.map((v) => (v.ratio > 0 ? v.ratio.toFixed(2) : '—'))),
-      row('Transfer Date', '', comps.map((c) => c.saleDate || '—')),
-      row('Cash Eq. Sale Price', '', comps.map((c) => (c.price > 0 ? fmtCurrency(c.price) : '—'))),
-      row('UNADJUSTED VALUE INDICATORS', null, [], { section: true }),
-      row('Unadjusted Price / SF', '', compValues.map((v) => (v.unadjSF > 0 ? v.unadjSF.toFixed(2) : '—'))),
-      row('Market Conditions', '', comps.map((c) => pct(c.adjMarketConditions))),
-      row('Condition of Sale', '', comps.map((c) => pct(c.adjConditionOfSale))),
-      row('Adjusted Price / SF', '', compValues.map((v) => (v.adjSF > 0 ? v.adjSF.toFixed(2) : '—'))),
-      row('COMPARABILITY ADJUSTMENTS (%)', null, [], { section: true }),
-      ...ADJ_FIELDS.slice(0, 10).map(([f, label]) => row(label, '', comps.map((c) => pct(c[f])))),
-      row('NET ADJUSTMENTS', '', compValues.map((v) => (v.net !== 0 ? pct(v.net) : '0%')), { bold: true }),
-      row('FINAL', null, [], { section: true }),
-      row('Adj. Price / SF', '', compValues.map((v) => (v.adjSF > 0 ? v.adjSF.toFixed(2) : '—')), { bold: true }),
-    ),
-  );
-
-  const comp = computeAppraisal(d);
-  return el('div', {},
-    el('div', { class: 'sales-meta' },
-      el('span', {}, `Eff. Date: ${p.effectiveDate || '—'}`),
-      el('span', {}, `Appraiser ID: ${p.appraiserLicense || '—'}`),
-    ),
-    el('div', { class: 'sales-grid-wrap' }, table),
-    el('div', { class: 'sales-correlated' },
-      el('span', { class: 'sc-left' },
-        `SUBJECT CORRELATED VALUE: $${comp.sales.correlatedSF.toFixed(2)}/SF × ${fmtNumber(comp.sales.subjectSF)} SF`),
-      el('span', { class: 'sc-right', 'data-calc': 'sales.valueBySales', 'data-fmt': 'cur' }, fmtCurrency(comp.sales.valueBySales)),
-    ),
-  );
 }
 
 // comp editor (CompForm.tsx) — fields bind directly to the comp object
@@ -938,14 +895,16 @@ function salesTab() {
   const repo = section('Sales Comparison', null,
     el('span', { class: 'desc', style: 'color:#94a3b8' },
       `${s.comparables.length} of ${repoRecords.length} comps · ${permCount} permanent · ${transCount} transfer`),
-    el('button', { class: 'btn sm dark-ghost', onclick: () => { loadRepo(); } }, '⟳ Reload'),
     el('div', { class: 'repo-panel', style: 'border:0' },
-      el('div', { class: 'repo-search' },
-        el('input', {
-          placeholder: 'Search APN or address…',
-          value: repoQuery,
-          oninput: (e) => { repoQuery = e.target.value; renderRepoResults(); },
-        }),
+      el('div', { class: 'repo-filters' },
+        el('div', { class: 'repo-filter repo-filter-search' },
+          el('label', {}, 'Search'),
+          el('input', {
+            placeholder: 'APN or address…',
+            value: repoQuery,
+            oninput: (e) => { repoQuery = e.target.value; renderRepoResults(); },
+          }),
+        ),
         el('div', { class: 'repo-filter' },
           el('label', {}, 'City'),
           el('input', { value: repoCity, placeholder: 'Any', oninput: (e) => { repoCity = e.target.value; renderRepoResults(); } }),
@@ -964,12 +923,14 @@ function salesTab() {
         ),
         el('div', { class: 'repo-filter' },
           el('label', {}, 'From'),
-          el('input', { type: 'date', value: repoMinDate, onchange: (e) => { repoMinDate = e.target.value; renderRepoResults(); } }),
+          el('input', { type: 'text', placeholder: 'Date', value: repoMinDate, oninput: (e) => { repoMinDate = e.target.value; renderRepoResults(); } }),
         ),
         el('div', { class: 'repo-filter' },
           el('label', {}, 'To'),
-          el('input', { type: 'date', value: repoMaxDate, onchange: (e) => { repoMaxDate = e.target.value; renderRepoResults(); } }),
+          el('input', { type: 'text', placeholder: 'Date', value: repoMaxDate, oninput: (e) => { repoMaxDate = e.target.value; renderRepoResults(); } }),
         ),
+      ),
+      el('div', { class: 'repo-actions' },
         el('button', { class: 'btn sm', onclick: () => {
           const comp = newComp();
           s.comparables = [...s.comparables, comp];
@@ -980,13 +941,15 @@ function salesTab() {
         } }, '+ Manual Comp'),
         el('button', { class: 'btn sm', title: 'Import comps from a CSV file (stored on this machine only)', onclick: () => document.getElementById('repo-csv-input')?.click() }, '⬆ Import CSV'),
         el('button', { class: 'btn sm dark-ghost', title: 'Remove CSV-imported comps from this machine', onclick: onClearLocalComps }, 'Clear Local'),
+        el('button', { class: 'btn sm dark-ghost', title: 'Reload comps from the repository', onclick: () => { loadRepo(); } }, '⟳ Reload'),
         el('input', { type: 'file', accept: '.csv,text/csv', id: 'repo-csv-input', style: 'display:none', onchange: onRepoCsvFile }),
       ),
       el('div', { class: 'repo-results', id: 'repo-results' }),
     ),
   );
 
-  const grid = salesGrid();
+  // The full sales comparison grid now lives in the report preview pane
+  // (report.js salesSheet) — the form pane is data-entry only.
 
   // Comp sub-tabs + active comp form
   let subtabs = null;
@@ -1006,7 +969,9 @@ function salesTab() {
       'No comparables. Search an APN to auto-populate, or add manually.');
   }
 
-  return [repo, grid, subtabs];
+  const remarks = section('Sales Remarks', null, null, areaField('', 'sales.remarks', 3));
+
+  return [repo, subtabs, remarks];
 }
 
 // --- Income tab (IncomeTab.tsx) ------------------------------------------------
@@ -1189,6 +1154,8 @@ function coverSetupBar(caseSeg) {
     apnField = el('div', { class: 'cs-apn-chip' },
       el('span', { class: 'cs-apn-chip-apn' }, apn),
       addr ? el('span', { class: 'cs-apn-chip-addr' }, addr) : null,
+      el('button', { class: 'cs-apn-chip-view', type: 'button', title: 'View the county parcel page for this APN',
+        onclick: () => window.dispatchEvent(new CustomEvent('appraisal:view-parcel')) }, '📍 View Parcel'),
       el('button', { class: 'cs-apn-chip-change', type: 'button', title: 'Change APN',
         onclick: () => { coverApnEditing = true; renderForm(); } }, 'Change'),
     );
@@ -1264,7 +1231,7 @@ function coverTab() {
         ),
         el('div', { class: 'field-grid c3' },
           numField('Sale Price', 'property.salePrice', { prefix: '$' }),
-          numField('Total Posted', 'cover.totalPosted', { prefix: '$' }),
+          numField('Enrolled Value', 'cover.totalPosted', { prefix: '$' }),
           textField('Appraiser ID', 'property.appraiserId', { placeholder: 'e.g. 677' }),
         ),
         el('div', { class: 'field-grid c3' },
@@ -1398,7 +1365,7 @@ export function renderForm() {
     el('div', { class: 'tabs-box' },
       TABS.map((t) => el('button', {
         class: `tab ${t.id === activeTab ? 'active' : ''}`,
-        onclick: () => { activeTab = t.id; renderForm(); },
+        onclick: () => { activeTab = t.id; renderForm(); scrollToSection(t.id); },
       }, t.label)),
     ),
   );

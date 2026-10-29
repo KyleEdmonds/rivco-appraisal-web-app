@@ -83,17 +83,22 @@ function table(headers, rows) {
 }
 
 const ADJ_KEYS = ['adjBuildingSize','adjLocation','adjCornerSite','adjAge','adjQuality','adjCondition','adjTenantsUse','adjOccupancy','adjLandBldgRatio','adjFreeway','adjMarketConditions','adjConditionOfSale'];
-
-function compRow(c) {
-  const unadjSF = c.buildingArea > 0 ? c.price / c.buildingArea : 0;
-  const net = ADJ_KEYS.reduce((s, f) => s + (Number(c[f]) || 0), 0);
-  const adjSF = unadjSF * (1 + net / 100);
-  return [
-    c.address || c.parcel, fmtDate(c.saleDate), fmtCurrency(c.price),
-    fmtNumber(c.buildingArea), fmtNumber(unadjSF), fmtPct(net), fmtNumber(adjSF),
-    c.isArmsLength ? 'Adj.' : 'Ind.',
-  ];
-}
+// Key + display label for each adjustment (mirrors form.js ADJ_FIELDS) — used by
+// the full sales comparison grid below.
+const ADJ_FIELDS = [
+  ['adjBuildingSize', 'Building Size'],
+  ['adjLocation', 'Location'],
+  ['adjCornerSite', 'Corner Site / Access'],
+  ['adjAge', 'Age'],
+  ['adjQuality', 'Quality'],
+  ['adjCondition', 'Condition'],
+  ['adjTenantsUse', 'Tenants / Use'],
+  ['adjOccupancy', 'Occupancy'],
+  ['adjLandBldgRatio', 'Land to Bldg. Ratio'],
+  ['adjFreeway', 'Freeway Exposure'],
+  ['adjMarketConditions', 'Market Conditions'],
+  ['adjConditionOfSale', 'Condition of Sale'],
+];
 
 // --- sheets ------------------------------------------------------------------
 
@@ -107,71 +112,103 @@ function coverSheet(d, total) {
   return transferCover(d, total);
 }
 
-// Transfer cover: text fields on the left, subject image on the right
-// (full height, ~40% width). Clean key-value layout.
+// Transfer cover: Transfer Details row, Property Identification grid,
+// parcel satellite image, value cards, and a full-width notes block.
+// The navy masthead (kept via sheet()) stays on top.
 function transferCover(d, total) {
   const p = d.property;
-  const field = (label, value) => el('div', { class: 'trc2-field' },
-    el('div', { class: 'trc2-k' }, label),
-    el('div', { class: 'trc2-v' }, value || '—'),
-  );
-  const box = (title, body) => el('div', { class: 'trc2-box' },
-    el('header', {}, title),
-    el('div', { class: 'trc2-body' }, body),
-  );
+  const imp = d.improvements.primary;
+  const land = d.land;
 
-  const propertyId = box('Property Identification',
-    el('div', { class: 'trc2-fields' },
-      field('APN', p.apn),
-      field('Situs', titleCase(p.address)),
-      field('City', normalizeCity(p.city)),
-      field('Property Type', d.improvements.primary.type),
-    ),
+  const field = (label, value) => el('div', { class: 'cv-field' },
+    el('div', { class: 'cv-k' }, label),
+    el('div', { class: 'cv-v' }, value || '—'),
   );
+  const card = (label, value) => el('div', { class: 'cv-card' },
+    el('div', { class: 'cv-card-k' }, label),
+    el('div', { class: 'cv-card-v' }, value || '—'),
+  );
+  const sec = (label) => el('div', { class: 'cv-sec' }, label);
 
-  const transferDetails = box('Transfer Details',
-    el('div', { class: 'trc2-fields' },
+  // Transfer Details — a single row of details.
+  const transferDetails = el('div', {},
+    sec('Transfer Details'),
+    el('div', { class: 'cv-row' },
       field('Date of Transfer', fmtDate(p.effectiveDate)),
       field('Document Number', p.transferDocumentNumber),
       field('Ratio Code', p.ratioCode),
     ),
   );
 
-  const valuation = box('Valuation Details',
-    el('div', { class: 'trc2-fields trc2-cols2' },
-      field('Sale Price', fmtCurrency(p.salePrice)),
-      field('Total Posted', fmtCurrency(d.cover.totalPosted)),
+  // Property Identification — no quality / condition / zoning on the cover.
+  // Row 1: APN / Address / City. Row 2: the rest of the identification fields.
+  const propertyId = el('div', {},
+    sec('Property Identification'),
+    el('div', { class: 'cv-row' },
+      field('APN', p.apn),
+      field('Address', titleCase(p.address)),
+      field('City', normalizeCity(p.city)),
+    ),
+    el('div', { class: 'cv-row' },
+      field('Property Type', imp.type),
+      field('Year Built', imp.yearBuilt ? String(imp.yearBuilt) : ''),
+      field('Gross Floor Area', imp.grossFloorArea > 0 ? `${fmtNumber(imp.grossFloorArea)} SF` : ''),
+      field('Site Area', land.acres > 0 ? `${land.acres.toFixed(2)} ac` : (land.siteAreaSqFt > 0 ? `${fmtNumber(land.siteAreaSqFt)} SF` : '')),
     ),
   );
 
-  const appraiserInfo = box('Appraiser Info',
-    el('div', { class: 'trc2-fields' },
-      field('Appraiser ID', p.appraiserId),
-      field('Section', p.section),
-    ),
-  );
-
-  const appraiserNotes = box('Appraiser Notes',
-    el('div', { class: 'trc2-notes' }, p.appraiserNotes || '—'),
-  );
-
-  const subjUrl = resolveSubjectImageUrl(d);
-  const subjectPhoto = el('div', { class: `trc2-photo${subjUrl ? '' : ' trc2-photo-empty'}` },
+  // Parcel satellite image — the GIS parcel map is the default when no
+  // image has been explicitly selected.
+  const subjUrl = resolveSubjectImageUrl(d) || (p.apn ? `/api/parcel-image/${encodeURIComponent(p.apn)}` : null);
+  const photo = el('div', { class: `cv-photo${subjUrl ? '' : ' cv-photo-empty'}` },
+    el('div', { class: 'cv-photo-cap' }, 'Parcel Satellite Image'),
     subjUrl
-      ? el('img', { src: subjUrl, alt: 'Subject parcel map' })
-      : el('div', { class: 'trc2-photo-ph' }, 'No image'),
+      ? el('img', { src: subjUrl, alt: 'Parcel satellite image' })
+      : el('div', { class: 'cv-photo-ph' }, 'No image'),
+  );
+
+  // Per-unit value: $/SF when there's building area, $/Acre for vacant land.
+  // Only populated when the amount is present. `unit` is the label suffix
+  // (e.g. "/ SF" or "$/SF"); the acre variant swaps the trailing unit word.
+  const gfa = imp.grossFloorArea || 0;
+  const acres = land.acres || 0;
+  const perUnit = (baseLabel, amount, unit = '/ SF') => {
+    const acreUnit = unit.replace(/SF$/, 'Acre');
+    if (!(amount > 0)) return { label: `${baseLabel} ${unit}`, value: '' };
+    if (gfa > 0) {
+      return { label: `${baseLabel} ${unit}`, value: `$${(amount / gfa).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` };
+    }
+    if (acres > 0) {
+      return { label: `${baseLabel} ${acreUnit}`, value: `$${Math.round(amount / acres).toLocaleString('en-US')}` };
+    }
+    return { label: `${baseLabel} ${unit}`, value: '' };
+  };
+  const salePerUnit = perUnit('Sale Price', p.salePrice);
+  const postedPerUnit = perUnit('Enrolled', d.cover.totalPosted, '$/SF');
+
+  // Value cards.
+  const cards = el('div', { class: 'cv-cards' },
+    card('Sale Price', fmtCurrency(p.salePrice)),
+    card(salePerUnit.label, salePerUnit.value),
+    card('Enrolled Value', fmtCurrency(d.cover.totalPosted)),
+    card(postedPerUnit.label, postedPerUnit.value),
+    card('Appraiser ID', p.appraiserId),
+    card('Section', p.section),
+  );
+
+  // Notes.
+  const notes = el('div', { class: 'cv-notes' },
+    sec('Appraiser Notes'),
+    el('div', { class: 'cv-notes-body' }, p.appraiserNotes || '—'),
   );
 
   return sheet(1, total,
-    el('div', { class: 'cover-inner trc2-inner' },
-      el('div', { class: 'trc2-left' },
-        propertyId,
-        transferDetails,
-        valuation,
-        appraiserInfo,
-        appraiserNotes,
-      ),
-      subjectPhoto,
+    el('div', { class: 'cover-inner cv-inner' },
+      transferDetails,
+      cards,
+      propertyId,
+      photo,
+      notes,
     ),
   );
 }
@@ -227,10 +264,11 @@ function generalCover(d, total) {
     el('div', { class: 'trc2-notes' }, p.appraiserNotes || '—'),
   );
 
-  const subjUrl = resolveSubjectImageUrl(d);
+  // The GIS parcel map is the default when no image has been selected.
+  const subjUrl = resolveSubjectImageUrl(d) || (p.apn ? `/api/parcel-image/${encodeURIComponent(p.apn)}` : null);
   const subjectPhoto = el('div', { class: `trc2-photo${subjUrl ? '' : ' trc2-photo-empty'}` },
     subjUrl
-      ? el('img', { src: subjUrl, alt: 'Subject parcel map' })
+      ? el('img', { src: subjUrl, alt: 'Parcel satellite image' })
       : el('div', { class: 'trc2-photo-ph' }, 'No image'),
   );
 
@@ -440,15 +478,81 @@ function stipFooter(d, total, t) {
   ];
 }
 
+// Full sales comparison grid — subject vs. each comp across characteristics and
+// adjustments. This is the single home for the grid (the form pane no longer
+// renders it). Read-only here: no comp links / delete buttons.
 function salesSheet(d, comp) {
-  const rows = d.sales.comparables.map(compRow);
+  const p = d.property;
+  const imp = d.improvements.primary;
+  const land = d.land;
+  const s = d.sales;
+  const comps = s.comparables;
+
+  const subjectSF = imp.grossFloorArea || 0;
+  const subjectAcres = (land.siteAreaSqFt || 0) / 43560;
+  const subjectRatio = subjectSF > 0 ? (land.siteAreaSqFt || 0) / subjectSF : 0;
+  const compValues = comps.map((c) => {
+    const unadjSF = c.buildingArea > 0 ? c.price / c.buildingArea : 0;
+    const net = ADJ_FIELDS.reduce((sum, [f]) => sum + (Number(c[f]) || 0), 0);
+    const adjSF = unadjSF * (1 + net / 100);
+    const ratio = c.buildingArea > 0 ? (c.landArea || 0) * 43560 / c.buildingArea : 0;
+    return { unadjSF, net, adjSF, ratio };
+  });
+  const pct = (v) => (v !== 0 ? `${v > 0 ? '' : '-'}${Math.abs(v)}%` : '');
+  const compAge = imp.yearBuilt ? String(new Date().getFullYear() - imp.yearBuilt) : '—';
+
+  let rowNum = 0;
+  const row = (label, subject, cells, opts = {}) => {
+    if (opts.section) {
+      return el('tr', { class: 'section-row' }, el('td', { colspan: 2 + comps.length }, label));
+    }
+    const cls = [rowNum++ % 2 === 1 ? 'stripe' : '', opts.bold ? 'bold-row' : ''].filter(Boolean).join(' ');
+    return el('tr', { class: cls },
+      el('td', { class: 'row-label' }, label),
+      el('td', { class: 'subject' }, subject ?? '—'),
+      cells.map((c) => el('td', {}, c ?? '—')),
+    );
+  };
+
+  const table = el('table', { class: 'sales-grid' },
+    el('thead', {}, el('tr', {},
+      el('th', {}, 'Description'),
+      el('th', {}, 'Subject'),
+      comps.map((c, i) => el('th', {}, `Comp ${i + 1}`)),
+    )),
+    el('tbody', {},
+      row('Parcel #', p.apn, comps.map((c) => c.parcel || '—')),
+      row('Property Type', imp.type, comps.map((c) => c.propertyType || '—')),
+      row('Location', p.address, comps.map((c) => c.address || '—')),
+      row('City', normalizeCity(p.city), comps.map((c) => normalizeCity(c.city) || '—')),
+      row('Age', compAge, comps.map((c) => (c.age > 0 ? String(c.age) : '—'))),
+      row('Quality', imp.quality, comps.map((c) => c.quality || '—')),
+      row('Condition', imp.condition, comps.map((c) => c.condition || '—')),
+      row('Land Area (Acres)', subjectAcres > 0 ? subjectAcres.toFixed(2) : '—', comps.map((c) => (c.landArea > 0 ? c.landArea.toFixed(2) : '—'))),
+      row('Building Area (SF)', subjectSF > 0 ? fmtNumber(subjectSF) : '—', comps.map((c) => (c.buildingArea > 0 ? fmtNumber(c.buildingArea) : '—'))),
+      row('Land to Bldg. Ratio', subjectRatio > 0 ? subjectRatio.toFixed(2) : '—', compValues.map((v) => (v.ratio > 0 ? v.ratio.toFixed(2) : '—'))),
+      row('Transfer Date', '', comps.map((c) => (c.saleDate ? fmtDate(c.saleDate) : '—'))),
+      row('Cash Eq. Sale Price', '', comps.map((c) => (c.price > 0 ? fmtCurrency(c.price) : '—'))),
+      row('UNADJUSTED VALUE INDICATORS', null, [], { section: true }),
+      row('Unadjusted Price / SF', '', compValues.map((v) => (v.unadjSF > 0 ? v.unadjSF.toFixed(2) : '—'))),
+      row('Market Conditions', '', comps.map((c) => pct(c.adjMarketConditions))),
+      row('Condition of Sale', '', comps.map((c) => pct(c.adjConditionOfSale))),
+      row('Adjusted Price / SF', '', compValues.map((v) => (v.adjSF > 0 ? v.adjSF.toFixed(2) : '—'))),
+      row('COMPARABILITY ADJUSTMENTS (%)', null, [], { section: true }),
+      ...ADJ_FIELDS.slice(0, 10).map(([f, label]) => row(label, '', comps.map((c) => pct(c[f])))),
+      row('NET ADJUSTMENTS', '', compValues.map((v) => (v.net !== 0 ? pct(v.net) : '0%')), { bold: true }),
+      row('FINAL', null, [], { section: true }),
+      row('Adj. Price / SF', '', compValues.map((v) => (v.adjSF > 0 ? v.adjSF.toFixed(2) : '—')), { bold: true }),
+    ),
+  );
+
   return el('div', {},
     heading('Sales Comparison Approach'),
-    table(['Comp', 'Sale Date', 'Price', 'Bldg SF', 'Unadj $/SF', 'Net Adj', 'Adj $/SF', 'Type'], rows),
-    el('div', { class: 'calc-strip' },
-      el('span', {}, `Correlated $/SF: ${fmtNumber(comp.sales.correlatedSF)}`),
-      el('span', {}, `Subject SF: ${fmtNumber(comp.sales.subjectSF)}`),
-      el('span', { class: 'strong' }, `Value by Sales: ${fmtCurrency(comp.sales.valueBySales)}`),
+    el('div', { class: 'sales-grid-wrap' }, table),
+    el('div', { class: 'sales-correlated' },
+      el('span', { class: 'sc-left' },
+        `SUBJECT CORRELATED VALUE: $${comp.sales.correlatedSF.toFixed(2)}/SF × ${fmtNumber(comp.sales.subjectSF)} SF`),
+      el('span', { class: 'sc-right' }, fmtCurrency(comp.sales.valueBySales)),
     ),
     d.sales.remarks ? el('p', { class: 'notes' }, d.sales.remarks) : null,
   );
@@ -659,20 +763,22 @@ export function renderReport() {
   if (!root) return;
   const d = state.data;
   const comp = computeAppraisal(d);
+  // Each sheet is tagged with the form-tab section it belongs to, so the left
+  // pane can scroll the preview to the matching page when a tab is selected.
   const bodySheets = [
-    subjectPropertySheet(d, comp),
-    salesSheet(d, comp),
-    ...compDetailSheets(d, comp),
-    mapSheet(d, comp),
-    ...(hasIncomeData(d) ? [incomeSheet(d, comp)] : []),
-    ...(hasCostData(d) ? [costSheet(d, comp)] : []),
-    reconciliationSheet(d, comp),
+    { section: 'subject', content: subjectPropertySheet(d, comp) },
+    { section: 'sales', content: salesSheet(d, comp) },
+    ...compDetailSheets(d, comp).map((c) => ({ section: 'sales', content: c })),
+    { section: 'subject', content: mapSheet(d, comp) },
+    ...(hasIncomeData(d) ? [{ section: 'income', content: incomeSheet(d, comp) }] : []),
+    ...(hasCostData(d) ? [{ section: 'cost', content: costSheet(d, comp) }] : []),
+    { section: 'reconciliation', content: reconciliationSheet(d, comp) },
   ];
   const total = bodySheets.length + 1;
   const cover = coverSheet(d, total);
   root.replaceChildren(
-    el('div', { class: 'sheet-scale' }, cover),
-    ...bodySheets.map((c, i) => el('div', { class: 'sheet-scale' }, sheet(i + 2, total, c))),
+    el('div', { class: 'sheet-scale', 'data-section': 'cover' }, cover),
+    ...bodySheets.map((b, i) => el('div', { class: 'sheet-scale', 'data-section': b.section }, sheet(i + 2, total, b.content))),
   );
   const meta = document.querySelector('.staging-toolbar .st-meta');
   if (meta) meta.textContent = `${total} sheets · 8.5×11`;
@@ -715,6 +821,18 @@ export function fitSheets() {
   });
   const pct = document.querySelector('.staging-toolbar .zoom-pct');
   if (pct) pct.textContent = `${Math.round(s * 100)}%`;
+}
+
+// Scroll the preview pane to the first sheet tagged with the given form-tab
+// section (cover / subject / sales / income / cost / reconciliation). Used so
+// selecting a tab in the left pane jumps the preview to the matching page.
+export function scrollToSection(sectionId) {
+  const root = document.getElementById('report-root');
+  if (!root) return;
+  const target = root.querySelector(`.sheet-scale[data-section="${sectionId}"]`);
+  if (!target) return;
+  const top = target.getBoundingClientRect().top - root.getBoundingClientRect().top + root.scrollTop;
+  root.scrollTo({ top, behavior: 'smooth' });
 }
 
 // Live top bar: property headline + total assessed (matches original TopBar).

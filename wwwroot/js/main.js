@@ -3,7 +3,7 @@
 // Left pane: control bar (dates + APN search) + tabbed form
 // Right pane: report staging. Draggable split handle between them.
 // ---------------------------------------------------------------------------
-import { api, state, saveCurrent, loadAppraisal, newAppraisal, fmtCurrency, fmtNumber, fmtAcresNum, titleCase, normalizeCity, fmtDate, computeAppraisal, scheduleAutosave, exportWip, importWip, workspace, activeTab, addTab, closeTab } from './core.js';
+import { api, state, saveCurrent, loadAppraisal, newAppraisal, fmtCurrency, fmtNumber, fmtAcresNum, titleCase, normalizeCity, fmtDate, computeAppraisal, scheduleAutosave, exportWip, importWip, workspace, activeTab, addTab, closeTab, snapshotActiveTab, restoreWorkspaceLocal, clearLocalWorkspace, migrateSubjectImage } from './core.js';
 import { renderForm, setTab, loadRepo, commitCoverApn } from './form.js';
 import { renderReport, fitSheets, zoomBy, zoomFit } from './report.js';
 
@@ -26,25 +26,6 @@ function toast(msg, isError = false) {
   document.body.append(t);
   setTimeout(() => t.remove(), 3000);
 }
-
-// --- theme (light / dark) ----------------------------------------------------
-// Persisted in localStorage; applied to <html data-theme> so the CSS variable
-// overrides in app.css take effect. The toggle button lives in the top bar.
-const THEME_KEY = 'aw-theme';
-function currentTheme() {
-  return localStorage.getItem(THEME_KEY) === 'dark' ? 'dark' : 'light';
-}
-function applyTheme(theme) {
-  document.documentElement.setAttribute('data-theme', theme);
-  const btn = document.getElementById('btn-theme');
-  if (btn) btn.textContent = theme === 'dark' ? '☀ Light' : '☾ Dark';
-}
-function toggleTheme() {
-  const next = currentTheme() === 'dark' ? 'light' : 'dark';
-  localStorage.setItem(THEME_KEY, next);
-  applyTheme(next);
-}
-applyTheme(currentTheme());
 
 // The cover setup bar's APN/Address search box is injected here (not in
 // form.js) because it needs the navigation callbacks that live in this module.
@@ -74,9 +55,6 @@ function renderTopBar() {
       ),
     ),
     el('div', { class: 'tb-right' },
-      el('div', { class: 'tb-group' },
-        el('button', { class: 'btn theme-toggle', id: 'btn-theme', title: 'Toggle light / dark theme', onclick: toggleTheme }, '☾ Dark'),
-      ),
       el('div', { class: 'tb-headline' },
         el('div', { class: 'addr', id: 'tb-addr' }, '—'),
         el('div', { class: 'sub', id: 'tb-sub' }, ''),
@@ -96,6 +74,7 @@ function renderTopBar() {
       ] : []),
       el('div', { class: 'tb-group' },
         el('button', { class: 'btn', id: 'btn-new' }, '+ New'),
+        el('button', { class: 'btn primary', id: 'btn-save-wip', title: 'Save this appraisal to the server as a work-in-progress (WIP). The working copy is also kept locally so a refresh never loses it.' }, '💾 Save as WIP'),
         el('span', { class: 'save-status', id: 'save-status' }, ''),
         el('button', { class: 'btn', id: 'btn-print' }, 'Print'),
       ),
@@ -110,6 +89,7 @@ function renderTopBar() {
   );
   if (RULE2_ENABLED) document.getElementById('btn-rule2').onclick = showRule2;
   document.getElementById('btn-new').onclick = openNew;
+  document.getElementById('btn-save-wip').onclick = onSave;
   document.getElementById('btn-print').onclick = () => window.print();
   // WIP dropdown: toggle the menu. It closes on outside click via the
   // module-level document handler (bound once, not here, to avoid stacking).
@@ -129,6 +109,7 @@ function renderTopBar() {
       try {
         const data = await importWip(file);
         if (!confirm('Import this WIP file? It will open in a new tab.')) return;
+        snapshotActiveTab();   // preserve the active tab's edits before replacing state
         state.id = null;
         state.data = data;
         state.dirty = true;
@@ -162,14 +143,18 @@ export function refreshTopBar() {
   if (val) val.textContent = fmtCurrency(computeAppraisal(d).totalAssessed);
 }
 
+// Manual "Save as WIP": the only thing (besides Finalize) that writes the
+// working appraisal to the server. Creates a WIP row on first save; subsequent
+// saves update the same row. The working copy is otherwise kept in IndexedDB
+// (local) for refresh recovery — see core.js.
 async function onSave() {
   try {
-    await saveCurrent();
+    const id = await saveCurrent();
     const t = activeTab();
-    if (t) { t.id = state.id; t.dirty = false; }
+    if (t) { t.id = id; t.dirty = false; t.data = state.data; }
     renderTopBar();
     renderTabs();
-    toast('Saved');
+    toast('Saved as WIP');
   } catch (e) {
     toast(`Save failed: ${e.message}`, true);
   }
@@ -217,51 +202,61 @@ function updateTabStrip() {
   if (label) label.textContent = (t.apn || t.address || 'New') + (t.dirty ? ' ●' : '');
 }
 
-// Switch to another open tab: persist the current working appraisal (if dirty),
-// then load the target. The previously-unsaved tab becomes saved on switch.
+// Switch to another open tab: snapshot the current tab's data into its record
+// (no server write), then load the target from memory (if it has data) or from
+// the server by id. Nothing is written to the server on a tab switch.
 async function switchToTab(key) {
   if (key === workspace.activeKey) return;
   const target = workspace.tabs.find((t) => t.key === key);
   if (!target) return;
-  const current = activeTab();
-  if (state.dirty) {
-    try {
-      const id = await saveCurrent();
-      if (current) { current.id = id; current.dirty = false; }
-    } catch (e) { toast(`Save failed: ${e.message}`, true); return; }
-  }
-  if (target.id !== null) {
+  snapshotActiveTab();
+  if (target.data && target.data.property) {
+    state.id = target.id ?? null;
+    state.data = normalizeParcel(target.data);
+    migrateSubjectImage(state.data);
+    state.dirty = !!target.dirty;
+  } else if (target.id !== null) {
     try { await loadAppraisal(target.id); }
     catch (e) { toast(`Open failed: ${e.message}`, true); return; }
   }
+  target.data = state.data;
   workspace.activeKey = key;
   renderTabs();
   renderForm(); renderReport(); refreshTopBar();
+  scheduleAutosave();
 }
 
-// Close a tab. Closing the active tab saves it first (if dirty) and loads the
-// next open tab. At least one tab is always kept open.
+// Close a tab. No server write on close: an unsaved (never-WIP-saved) tab with
+// unsaved changes prompts to discard; a saved tab just closes. Loads the next
+// open tab from memory or the server. At least one tab is always kept open.
 async function closeTabFn(key) {
   const tab = workspace.tabs.find((t) => t.key === key);
   if (!tab) return;
-  if (key !== workspace.activeKey) { closeTab(key); renderTabs(); return; }
+  if (key !== workspace.activeKey) { closeTab(key); renderTabs(); scheduleAutosave(); return; }
   if (workspace.tabs.length <= 1) { toast('Cannot close the only open tab.'); return; }
-  if (state.dirty) {
-    if (!confirm('Close this tab? Unsaved changes will be saved first.')) return;
-    try { await saveCurrent(); } catch (e) { toast(`Save failed: ${e.message}`, true); return; }
+  if (state.dirty && tab.id === null) {
+    if (!confirm('Close this tab? Unsaved changes will be discarded (not saved to the server).')) return;
   }
+  snapshotActiveTab();
   closeTab(key);
   const next = activeTab();
-  if (next && next.id !== null) {
+  if (next && next.data && next.data.property) {
+    state.id = next.id ?? null;
+    state.data = normalizeParcel(next.data);
+    migrateSubjectImage(state.data);
+    state.dirty = !!next.dirty;
+  } else if (next && next.id !== null) {
     try { await loadAppraisal(next.id); } catch (e) { toast(`Open failed: ${e.message}`, true); return; }
   } else {
     newAppraisal();
   }
   renderTabs(); renderForm(); renderReport(); refreshTopBar();
+  scheduleAutosave();
 }
 
 // Open a fresh, empty appraisal in a new tab.
 function openNew() {
+  snapshotActiveTab();   // preserve the active tab's edits before resetting state
   newAppraisal();
   addTab({ id: state.id, apn: '', address: '', dirty: state.dirty });
   showAppraisal();
@@ -866,6 +861,7 @@ async function openTransfer(r) {
 
 async function openById(id) {
   try {
+    snapshotActiveTab();   // preserve the active tab's edits before loading
     await loadAppraisal(id);
     addTab({ id, apn: state.data?.property?.apn || '', address: state.data?.property?.address || '', dirty: false });
     showAppraisal();
@@ -897,6 +893,7 @@ async function openTransferComp(r) {
     ? apnAppraisals.find((a) => String(a.apn || '').trim() === apn)
     : null;
   if (existing) { openById(existing.id); return; }
+  snapshotActiveTab();   // preserve the active tab's edits before resetting state
   newAppraisal();
   const d = state.data;
   d.property.apn = r.apn || '';
@@ -1019,7 +1016,6 @@ function stagingToolbar() {
       el('button', { class: 'st-btn', title: 'Download this appraisal as a JSON file', onclick: exportWip }, '⬇ Save to PC'),
       el('button', { class: 'st-btn finalize', title: 'Save this appraisal and archive it as a permanent sales comp', onclick: onFinalize }, '✓ Finalize & Save to Archive'),
       el('button', { class: 'st-btn', title: 'Browse archived (finalized) appraisals', onclick: showArchive }, 'View Archive'),
-      el('button', { class: 'st-btn', title: 'View the county parcel page for this APN', onclick: viewParcelFromReport }, '📍 View Parcel'),
       btn('−', 'Zoom out', () => zoomBy(-0.1)),
       pct,
       btn('+', 'Zoom in', () => zoomBy(0.1)),
@@ -1051,21 +1047,70 @@ async function onFinalize() {
 }
 
 // --- Archive view -------------------------------------------------------------
-// Browse the archived (finalized) appraisals — the permanent comp store.
+// Two archives: WIP (manually saved work-in-progress appraisals, from the
+// appraisals table) and Final (finalized appraisals, the permanent comp store).
+let archiveMode = 'wip';   // 'wip' | 'final'
+
 async function showArchive() {
   const main = document.getElementById('main');
   main.replaceChildren(el('div', { class: 'list-empty' }, 'Loading…'));
-  let rows;
-  try { rows = await api.getPermanentComps(); }
-  catch (e) {
-    main.replaceChildren(el('div', { class: 'list-empty' }, `Failed to load: ${e.message}`));
+  await renderArchive();
+}
+
+async function renderArchive() {
+  const main = document.getElementById('main');
+  main.replaceChildren(el('div', { class: 'list-empty' }, 'Loading…'));
+
+  // Toggle between the WIP and Final archives.
+  const toggle = el('div', { class: 'archive-toggle' },
+    el('button', { class: `btn ${archiveMode === 'wip' ? 'primary' : ''}`, onclick: () => { archiveMode = 'wip'; renderArchive(); } }, 'WIP'),
+    el('button', { class: `btn ${archiveMode === 'final' ? 'primary' : ''}`, onclick: () => { archiveMode = 'final'; renderArchive(); } }, 'Final'),
+  );
+
+  if (archiveMode === 'wip') {
+    let rows;
+    try { rows = await api.listAppraisals(); }
+    catch (e) { main.replaceChildren(el('div', { class: 'list-empty' }, `Failed to load: ${e.message}`)); return; }
+    rows = (Array.isArray(rows) ? rows : [])
+      .sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
+    main.replaceChildren(
+      el('div', { class: 'list-view' },
+        el('div', { class: 'list-head' },
+          el('h2', {}, 'Archive'),
+          toggle,
+          el('span', { class: 'r2-sub' }, `${rows.length} work-in-progress appraisal${rows.length === 1 ? '' : 's'}`),
+        ),
+        el('table', { class: 'list-table' },
+          el('thead', {}, el('tr', {}, ['APN', 'Address', 'City', 'Report Date', 'Final Value', 'Updated', ''].map((h) => el('th', {}, h)))),
+          el('tbody', {},
+            rows.length === 0
+              ? el('tr', {}, el('td', { colspan: 7 }, 'No WIP appraisals yet. Use “Save as WIP” to keep a working copy on the server.'))
+              : rows.map((r) => el('tr', { class: 'clickable', onclick: () => openById(r.id) },
+                  el('td', {}, r.apn || '—'),
+                  el('td', {}, r.address || '—'),
+                  el('td', {}, normalizeCity(r.city) || '—'),
+                  el('td', {}, r.reportDate ? fmtDate(r.reportDate) : '—'),
+                  el('td', { class: 'num' }, r.finalValue != null ? fmtCurrency(r.finalValue) : '—'),
+                  el('td', {}, r.updatedAt ? new Date(r.updatedAt).toLocaleDateString() : '—'),
+                  el('td', {}, el('button', { class: 'btn tiny', onclick: (e) => { e.stopPropagation(); openById(r.id); } }, 'Open')),
+                )),
+          ),
+        ),
+      ),
+    );
     return;
   }
+
+  // Final archive — the permanent comp store.
+  let rows;
+  try { rows = await api.getPermanentComps(); }
+  catch (e) { main.replaceChildren(el('div', { class: 'list-empty' }, `Failed to load: ${e.message}`)); return; }
   rows = Array.isArray(rows) ? rows : [];
   main.replaceChildren(
     el('div', { class: 'list-view' },
       el('div', { class: 'list-head' },
         el('h2', {}, 'Archive'),
+        toggle,
         el('span', { class: 'r2-sub' }, `${rows.length} finalized appraisal${rows.length === 1 ? '' : 's'} · permanent comps`),
       ),
       el('table', { class: 'list-table' },
@@ -1125,6 +1170,11 @@ function openArchiveDetail(r) {
 const pinDetail = (label, value) => el('div', { class: 'arch-field' },
   el('div', { class: 'arch-label' }, label),
   el('div', { class: 'arch-value' }, (value === undefined || value === null || value === '') ? '—' : String(value)));
+
+// Clean label/value pair for the PIN characteristics definition grid.
+const pinDef = (label, value) => el('div', { class: 'pin-def' },
+  el('div', { class: 'pin-def-k' }, label),
+  el('div', { class: 'pin-def-v' }, (value === undefined || value === null || value === '') ? '—' : String(value)));
 
 // --- parcel map ---------------------------------------------------------------
 // Parse a WKT POLYGON / MULTIPOLYGON string into an array of rings; each ring
@@ -1393,7 +1443,7 @@ async function showPinPage(apn, returnTo = 'landing') {
   try { appRows = await api.listAppraisals(); } catch { /* offline data */ }
   const mine = appRows
     .filter((r) => String(r.apn || '').trim() === String(apn).trim())
-    .sort((a, b) => String(b.reportDate || '').localeCompare(String(a.reportDate || '')));
+    .sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')) || String(b.reportDate || '').localeCompare(String(a.reportDate || '')));
 
   const view = el('div', { class: 'list-view pin-view' },
     el('div', { class: 'list-head' },
@@ -1426,26 +1476,35 @@ function renderPinBody(apn, parcel, mine) {
   const city = String(parcel.District || '').split(' ').slice(1).join(' ');
   const buildings = pinBuildings(parcel);
 
+  // Build a header row from [label, isNumeric] pairs so numeric headers
+  // right-align to match their (right-aligned) cells.
+  const pinHead = (cols) => el('thead', {}, el('tr', {}, cols.map(([h, num]) => el('th', { class: num ? 'num' : '' }, h))));
+  // Sort key for MM-DD-YYYY sale dates (county format) so cross-year ordering is correct.
+  const saleKey = (s) => { const m = String(s || '').match(/^(\d{2})-(\d{2})-(\d{4})$/); return m ? `${m[3]}-${m[1]}-${m[2]}` : String(s || ''); };
+  // Recent-first ordering for the history tables.
+  const sales = [...(parcel.sales || [])].sort((a, b) => saleKey(b.saledate).localeCompare(saleKey(a.saledate)));
+  const taxHistory = [...(parcel.history || [])].sort((a, b) => Number(b.TaxYear || 0) - Number(a.TaxYear || 0));
+
   // Left (main) column: characteristics, buildings, sales + tax history,
   // street view. Right column: the parcel map on its own.
   const left = el('div', { class: 'pin-col pin-col-main' },
     el('div', { class: 'pin-section' },
       el('div', { class: 'pin-section-title' }, 'Characteristics'),
-      el('div', { class: 'arch-grid pin-grid' },
-        pinDetail('Address', titleCase(parcel.address)),
-        pinDetail('City', normalizeCity(city)),
-        pinDetail('Class', titleCase(parcel.class_code)),
-        pinDetail('Acreage', fmtAcresNum(parcel.acreage)),
-        pinDetail('Site SqFt', fmtNumber(Number(String(parcel.SquareFeet).replace(/[^0-9.]/g, '')) || 0)),
-        pinDetail('District', titleCase(parcel.District)),
-        pinDetail('Legal Description', titleCase(parcel.LegalDescription)),
-        pinDetail('Coordinates', parcel.lat && parcel.lng ? `${parcel.lat}, ${parcel.lng}` : ''),
+      el('div', { class: 'pin-defs' },
+        pinDef('Address', titleCase(parcel.address)),
+        pinDef('City', normalizeCity(city)),
+        pinDef('Class', titleCase(parcel.class_code)),
+        pinDef('Acreage', fmtAcresNum(parcel.acreage)),
+        pinDef('Site SqFt', fmtNumber(Number(String(parcel.SquareFeet).replace(/[^0-9.]/g, '')) || 0)),
+        pinDef('District', titleCase(parcel.District)),
+        pinDef('Legal Description', titleCase(parcel.LegalDescription)),
+        pinDef('Coordinates', parcel.lat && parcel.lng ? `${parcel.lat}, ${parcel.lng}` : ''),
       ),
     ),
     buildings.length > 0 ? el('div', { class: 'pin-section' },
       el('div', { class: 'pin-section-title' }, `Buildings (${buildings.length})`),
       el('table', { class: 'list-table' },
-        el('thead', {}, el('tr', {}, ['Building', 'Type', 'Year Built', 'Quality', 'Condition', 'Area SF', 'Status'].map((h) => el('th', {}, h)))),
+        pinHead([['Building'], ['Type'], ['Year Built', true], ['Quality', true], ['Condition'], ['Area SF', true], ['Status']]),
         el('tbody', {}, buildings.map((b) => el('tr', {},
           el('td', {}, b.name),
           el('td', {}, b.type || '—'),
@@ -1460,10 +1519,10 @@ function renderPinBody(apn, parcel, mine) {
     (parcel.sales || []).length > 0 ? el('div', { class: 'pin-section' },
       el('div', { class: 'pin-section-title' }, 'County Sales History'),
       el('table', { class: 'list-table' },
-        el('thead', {}, el('tr', {}, ['Sale Date', 'Price', 'Ratio', 'Doc #'].map((h) => el('th', {}, h)))),
-        el('tbody', {}, (parcel.sales || []).map((s) => el('tr', {},
+        pinHead([['Sale Date'], ['Price', true], ['Ratio'], ['Doc #']]),
+        el('tbody', {}, sales.map((s) => el('tr', {},
           el('td', {}, s.saledate || '—'),
-          el('td', { class: 'num' }, s.SalePrice || '—'),
+          el('td', { class: 'num' }, s.SalePrice ? fmtCurrency(s.SalePrice) : '—'),
           el('td', {}, s.LocalRatioCd || '—'),
           el('td', {}, s.DocNumber || '—'),
         ))),
@@ -1472,17 +1531,33 @@ function renderPinBody(apn, parcel, mine) {
     (parcel.history || []).length > 0 ? el('div', { class: 'pin-section' },
       el('div', { class: 'pin-section-title' }, 'Tax History'),
       el('table', { class: 'list-table' },
-        el('thead', {}, el('tr', {}, ['Year', 'Type', 'Total Assessed', 'Land', 'Structure', 'Liv. Imp.'].map((h) => el('th', {}, h)))),
-        el('tbody', {}, (parcel.history || []).map((h) => el('tr', {},
+        pinHead([['Year'], ['Type'], ['Total Assessed', true], ['Land', true], ['Structure', true], ['Liv. Imp.', true]]),
+        el('tbody', {}, taxHistory.map((h) => el('tr', {},
           el('td', {}, h.TaxYear || '—'),
           el('td', {}, h.EventType || '—'),
-          el('td', { class: 'num' }, fmtNumber(Number(String(h.AssessedTot || '').replace(/[^0-9.]/g, '')) || 0)),
+          el('td', { class: 'num' }, fmtCurrency(Number(String(h.AssessedTot || '').replace(/[^0-9.]/g, '')) || 0)),
           el('td', { class: 'num' }, fmtNumber(Number(String(h.AssessedLand || '').replace(/[^0-9.]/g, '')) || 0)),
           el('td', { class: 'num' }, fmtNumber(Number(String(h.AssessedStructure || '').replace(/[^0-9.]/g, '')) || 0)),
           el('td', { class: 'num' }, fmtNumber(Number(String(h.AssessedLivImp || '').replace(/[^0-9.]/g, '')) || 0)),
         ))),
       ))
       : null,
+    el('div', { class: 'pin-section' },
+      el('div', { class: 'pin-section-title' }, `Past Valuations (${mine.length})`),
+      mine.length === 0
+        ? el('div', { class: 'r2-none' }, 'No appraisals for this PIN yet — start one above.')
+        : el('div', { class: 'pin-scroll' },
+            el('table', { class: 'list-table' },
+              pinHead([['Report Date'], ['Final Value', true], ['Updated'], ['']]),
+              el('tbody', {}, mine.map((r) => el('tr', { class: 'clickable', onclick: () => openById(r.id) },
+                el('td', {}, r.reportDate ? fmtDate(r.reportDate) : '—'),
+                el('td', { class: 'num' }, r.finalValue != null ? fmtCurrency(r.finalValue) : '—'),
+                el('td', {}, r.updatedAt ? new Date(r.updatedAt).toLocaleDateString() : '—'),
+                el('td', {}, el('button', { class: 'btn tiny', onclick: (e) => { e.stopPropagation(); openById(r.id); } }, 'Open')),
+              ))),
+            ),
+          ),
+    ),
     parcel.strview ? el('div', { class: 'pin-section' },
       el('div', { class: 'pin-section-title' }, 'Street View'),
       el('img', { class: 'pin-strview', src: parcel.strview, alt: 'Street view', loading: 'lazy' }))
@@ -1495,20 +1570,6 @@ function renderPinBody(apn, parcel, mine) {
     drawParcelMap(parcel)
       || el('div', { class: 'r2-none' }, 'No parcel shape available for this PIN.'),
     drawPinPhotos(apn),
-    el('div', { class: 'pin-section' },
-      el('div', { class: 'pin-section-title' }, `Past Valuations (${mine.length})`),
-      mine.length === 0
-        ? el('div', { class: 'r2-none' }, 'No appraisals for this PIN yet — start one above.')
-        : el('table', { class: 'list-table' },
-            el('thead', {}, el('tr', {}, ['Report Date', 'Final Value', 'Updated', ''].map((h) => el('th', {}, h)))),
-            el('tbody', {}, mine.map((r) => el('tr', { class: 'clickable', onclick: () => openById(r.id) },
-              el('td', {}, r.reportDate ? fmtDate(r.reportDate) : '—'),
-              el('td', { class: 'num' }, r.finalValue != null ? fmtCurrency(r.finalValue) : '—'),
-              el('td', {}, r.updatedAt ? new Date(r.updatedAt).toLocaleDateString() : '—'),
-              el('td', {}, el('button', { class: 'btn tiny', onclick: (e) => { e.stopPropagation(); openById(r.id); } }, 'Open')),
-            ))),
-        ),
-    ),
   );
 
   body.replaceChildren(el('div', { class: 'pin-cols' }, left, right));
@@ -1547,6 +1608,7 @@ function applyParcelFields(d, p) {
 }
 
 async function openAppraisalFromParcel(apn, caseType = 'transfer') {
+  snapshotActiveTab();   // preserve the active tab's edits before resetting state
   newAppraisal();
   const d = state.data;
   d.property.apn = apn;
@@ -1624,10 +1686,20 @@ async function boot() {
     openNew();
     return;
   }
-  // Default: the landing page (workflow selection).
+  // Default: restore the open workspace from IndexedDB (F5 recovery) if there
+  // is one; otherwise show the landing page (workflow selection).
+  const restored = await restoreWorkspaceLocal();
+  if (restored && workspace.tabs.length > 0) {
+    showAppraisal();
+    renderTabs();
+    refreshTopBar();
+    return;
+  }
   showLanding();
 }
 
+// "View Parcel" button in the cover APN chip (form.js) opens the county PIN page.
+window.addEventListener('appraisal:view-parcel', viewParcelFromReport);
 // Form edits update the top-bar headline + total assessed.
 window.addEventListener('appraisal:changed', refreshTopBar);
 // Keep the active workspace tab's label + dirty marker in sync.

@@ -535,37 +535,120 @@ export function closeTab(key) {
   }
 }
 
-// --- autosave (WIP) ----------------------------------------------------------
-// Debounced autosave of the working appraisal to the server (SQLite). Mirrors
-// the reference app's 1s-debounced WIP autosave. A new (unsaved) appraisal is
-// created on first autosave; subsequent autosaves update the same row. The
-// manual Save button still works for an immediate save.
-let autosaveTimer = null;
+// --- local workspace persistence (IndexedDB) ---------------------------------
+// The open workspace (all tabs + their data) is persisted to IndexedDB — this
+// browser only — on every change so an accidental refresh (F5) restores it.
+// This is local crash/refresh recovery, NOT a server copy: no server row is
+// created on edit. Only a manual "Save as WIP" or "Finalize" writes to the
+// server. The debounced hook is still named scheduleAutosave (it IS an
+// autosave — just a local one) so existing call sites keep working.
+const IDB_NAME = 'rivco-appraisal';
+const IDB_VERSION = 1;
+const IDB_STORE = 'workspace';
+const IDB_KEY = 'current';
 
-function setSaveStatus(next, error = null) {
-  const el = document.getElementById('save-status');
-  if (!el) return;
-  if (next === 'error') el.textContent = `Save failed: ${error || ''}`;
-  else el.textContent = '';
+function openIdb() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(IDB_NAME, IDB_VERSION);
+    req.onupgradeneeded = () => {
+      if (!req.result.objectStoreNames.contains(IDB_STORE)) req.result.createObjectStore(IDB_STORE);
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
 }
+async function idbPut(key, value) {
+  const db = await openIdb();
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, 'readwrite');
+    tx.objectStore(IDB_STORE).put(value, key);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+  db.close();
+}
+async function idbGet(key) {
+  const db = await openIdb();
+  const out = await new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, 'readonly');
+    const rq = tx.objectStore(IDB_STORE).get(key);
+    rq.onsuccess = () => resolve(rq.result ?? null);
+    rq.onerror = () => reject(rq.error);
+  });
+  db.close();
+  return out;
+}
+async function idbDel(key) {
+  const db = await openIdb();
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, 'readwrite');
+    tx.objectStore(IDB_STORE).delete(key);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+  db.close();
+}
+
+// Snapshot the active tab's current data into its tab record so it survives a
+// tab switch without a server write. Keeps the tab's label + dirty flag in sync.
+export function snapshotActiveTab() {
+  const t = activeTab();
+  if (!t) return;
+  t.data = state.data;
+  t.dirty = state.dirty;
+  t.apn = state.data?.property?.apn || t.apn;
+  t.address = state.data?.property?.address || t.address;
+}
+
+// Serialize the open workspace (all tabs + their data) for local persistence.
+function workspaceSnapshot() {
+  const active = activeTab();
+  return {
+    tabs: workspace.tabs.map((t) => ({
+      key: t.key, id: t.id, apn: t.apn, address: t.address, dirty: t.dirty,
+      data: (t.key === active?.key ? state.data : t.data) || null,
+    })),
+    activeKey: workspace.activeKey,
+    savedAt: new Date().toISOString(),
+  };
+}
+
+let localSaveTimer = null;
 
 export function scheduleAutosave() {
   if (!state.dirty) return;
-  if (autosaveTimer) clearTimeout(autosaveTimer);
-  autosaveTimer = setTimeout(runAutosave, 1000);
+  if (localSaveTimer) clearTimeout(localSaveTimer);
+  localSaveTimer = setTimeout(runLocalSave, 800);
 }
 
-async function runAutosave() {
-  autosaveTimer = null;
-  if (!state.dirty) return;
-  setSaveStatus('saving');
+async function runLocalSave() {
+  localSaveTimer = null;
+  try { await idbPut(IDB_KEY, workspaceSnapshot()); } catch { /* IndexedDB unavailable */ }
+}
+
+// Restore the open workspace from IndexedDB (F5 recovery). Returns true if a
+// workspace was restored, false if there was nothing to restore.
+export async function restoreWorkspaceLocal() {
   try {
-    await saveCurrent();
-    if (state.dirty) runAutosave();   // new edits landed during the save
-    else setSaveStatus('saved');
-  } catch (e) {
-    setSaveStatus('error', e.message);
-  }
+    const rec = await idbGet(IDB_KEY);
+    if (!rec || !Array.isArray(rec.tabs) || rec.tabs.length === 0) return false;
+    workspace.tabs = rec.tabs.map((t) => ({
+      key: t.key, id: t.id ?? null, apn: t.apn || '', address: t.address || '',
+      dirty: !!t.dirty, data: (t.data && t.data.property) ? t.data : null,
+    }));
+    const active = workspace.tabs.find((t) => t.key === rec.activeKey) || workspace.tabs[0];
+    workspace.activeKey = active.key;
+    state.id = active.id ?? null;
+    state.data = active.data ? normalizeParcel(active.data) : createEmptyParcel('');
+    migrateSubjectImage(state.data);
+    state.dirty = !!active.dirty;
+    return true;
+  } catch { return false; }
+}
+
+// Drop the locally-persisted workspace (e.g. after a clean save/close).
+export async function clearLocalWorkspace() {
+  try { await idbDel(IDB_KEY); } catch { /* ignore */ }
 }
 
 // --- WIP export / import -----------------------------------------------------
