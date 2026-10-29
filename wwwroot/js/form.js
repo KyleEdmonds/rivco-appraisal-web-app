@@ -4,7 +4,7 @@
 // ---------------------------------------------------------------------------
 import {
   state, markDirty, computeAppraisal, hasCostData, hasIncomeData,
-  fmtCurrency, fmtCurrencyRounded, fmtNumber, fmtPct, normalizeCity, api,
+  fmtCurrency, fmtCurrencyRounded, fmtNumber, fmtPct, normalizeCity, titleCase, api,
   getLocalComps, clearLocalComps, importLocalComps, scheduleAutosave,
   resolveSubjectImageUrl,
 } from './core.js';
@@ -1009,7 +1009,19 @@ function costTab() {
 // left, the case-type selector on the right. The search box itself is injected
 // by main.js (it owns the navigation callbacks) into #cover-search-slot after
 // each render.
+// APN chip state: when the APN is set we show a read-only badge; the user can
+// click "Change" to reveal the search box. `coverApnLast` auto-exits editing
+// mode whenever the APN value changes (opening another appraisal, importing
+// WIP, etc.). main.js calls commitCoverApn() after a search selection.
+let coverApnEditing = false;
+let coverApnLast = null;
+export function commitCoverApn() { coverApnEditing = false; }
+
 function coverSetupBar(caseSeg) {
+  const p = state.data.property;
+  const apn = String(p.apn || '').trim();
+  if (apn !== coverApnLast) { coverApnEditing = false; coverApnLast = apn; }
+
   const dateField = (label, path) => {
     const [parent, key] = resolvePath(path);
     const input = el('input', { class: 'cs-date', type: 'date' });
@@ -1024,10 +1036,26 @@ function coverSetupBar(caseSeg) {
       input,
     );
   };
+
+  // APN chip: read-only badge when set, search input when empty (or editing).
+  let apnField;
+  if (apn && !coverApnEditing) {
+    const addr = [titleCase(p.address), normalizeCity(p.city)]
+      .map((v) => (v ?? '').trim()).filter(Boolean).join(', ');
+    apnField = el('div', { class: 'cs-apn-chip' },
+      el('span', { class: 'cs-apn-chip-apn' }, apn),
+      addr ? el('span', { class: 'cs-apn-chip-addr' }, addr) : null,
+      el('button', { class: 'cs-apn-chip-change', type: 'button', title: 'Change APN',
+        onclick: () => { coverApnEditing = true; renderForm(); } }, 'Change'),
+    );
+  } else {
+    apnField = el('div', { class: 'cs-search-slot', id: 'cover-search-slot' });
+  }
+
   return el('div', { class: 'cover-setup' },
     el('div', { class: 'cs-field cs-search' },
       el('div', { class: 'cs-label' }, 'APN / Address'),
-      el('div', { class: 'cs-search-slot', id: 'cover-search-slot' }),
+      apnField,
     ),
     el('div', { class: 'cs-row' },
       dateField('Effective Date', 'property.effectiveDate'),

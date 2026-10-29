@@ -66,9 +66,9 @@
 |---|------|-------|--------|
 | 1 | Image reference model (replace base64 with `{source, file?}`) | core.js, form.js, report.js | ✅ |
 | 2 | New image panel component (GIS / Upload modes) | form.js, app.css | ✅ |
-| 3 | APN chip in setup bar | form.js, app.css | ⬜ |
+| 3 | APN chip in setup bar | form.js, app.css, main.js | ✅ |
 | 4 | Remove redundant fields (Parcel #, City, Subject tab images, `mapImageUrl`) | form.js, core.js | ✅ |
-| 5 | Print CSS + replace Export PDF with `window.print()` | report.js, app.css, index.html | ⬜ |
-| 6 | Remove jsPDF/html2canvas dependency | index.html, report.js | ⬜ |
-| 7 | PDF cover layout restructure (image right, text left) | report.js, app.css | ⬜ |
+| 5 | Print CSS + replace Export PDF with `window.print()` | report.js, app.css, index.html | ✅ |
+| 6 | Remove jsPDF/html2canvas dependency | index.html, report.js, wwwroot/lib/ | ✅ |
+| 7 | PDF cover layout restructure (image right, text left) | report.js, app.css | ✅ |
 | 8 | Migrate existing saved appraisals (strip base64 on load) | core.js | ✅ |

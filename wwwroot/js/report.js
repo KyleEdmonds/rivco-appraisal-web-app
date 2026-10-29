@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// report.js — right staging: live report preview + PDF export
+// report.js — right staging: live report preview (print via window.print())
 // ---------------------------------------------------------------------------
 import {
   state, computeAppraisal, hasCostData, hasIncomeData,
@@ -107,10 +107,8 @@ function coverSheet(d, total) {
   return transferCover(d, total);
 }
 
-// Transfer cover: sectioned grid layout.
-//   Row 1: Property Identification | Transfer Details
-//   Row 2: Valuation Details (full width)
-//   Row 3: Appraiser Info | Appraiser Notes
+// Transfer cover: text fields on the left, subject image on the right
+// (full height, ~40% width). Clean key-value layout.
 function transferCover(d, total) {
   const p = d.property;
   const field = (label, value) => el('div', { class: 'trc2-field' },
@@ -158,20 +156,22 @@ function transferCover(d, total) {
   );
 
   const subjUrl = resolveSubjectImageUrl(d);
-  const subjectPhoto = box('Subject Parcel Map',
-    el('div', { class: 'trc2-photo' },
-      subjUrl
-        ? el('img', { src: subjUrl, alt: 'Subject parcel map' })
-        : el('div', { class: 'trc2-photo-ph' }, 'No map'),
-    ),
+  const subjectPhoto = el('div', { class: `trc2-photo${subjUrl ? '' : ' trc2-photo-empty'}` },
+    subjUrl
+      ? el('img', { src: subjUrl, alt: 'Subject parcel map' })
+      : el('div', { class: 'trc2-photo-ph' }, 'No image'),
   );
 
   return sheet(1, total,
     el('div', { class: 'cover-inner trc2-inner' },
-      el('div', { class: 'trc2-row' }, propertyId, transferDetails),
-      el('div', { class: 'trc2-row' }, valuation),
-      el('div', { class: 'trc2-row' }, appraiserInfo, appraiserNotes),
-      el('div', { class: 'trc2-row' }, subjectPhoto),
+      el('div', { class: 'trc2-left' },
+        propertyId,
+        transferDetails,
+        valuation,
+        appraiserInfo,
+        appraiserNotes,
+      ),
+      subjectPhoto,
     ),
   );
 }
@@ -228,20 +228,22 @@ function generalCover(d, total) {
   );
 
   const subjUrl = resolveSubjectImageUrl(d);
-  const subjectPhoto = box('Subject Parcel Map',
-    el('div', { class: 'trc2-photo' },
-      subjUrl
-        ? el('img', { src: subjUrl, alt: 'Subject parcel map' })
-        : el('div', { class: 'trc2-photo-ph' }, 'No map'),
-    ),
+  const subjectPhoto = el('div', { class: `trc2-photo${subjUrl ? '' : ' trc2-photo-empty'}` },
+    subjUrl
+      ? el('img', { src: subjUrl, alt: 'Subject parcel map' })
+      : el('div', { class: 'trc2-photo-ph' }, 'No image'),
   );
 
   return sheet(1, total,
     el('div', { class: 'cover-inner trc2-inner' },
-      el('div', { class: 'trc2-row' }, propertyId, purpose),
-      el('div', { class: 'trc2-row' }, valuation),
-      el('div', { class: 'trc2-row' }, appraiserInfo, appraiserNotes),
-      el('div', { class: 'trc2-row' }, subjectPhoto),
+      el('div', { class: 'trc2-left' },
+        propertyId,
+        purpose,
+        valuation,
+        appraiserInfo,
+        appraiserNotes,
+      ),
+      subjectPhoto,
     ),
   );
 }
@@ -728,32 +730,8 @@ function updateTopBar() {
 }
 
 // --- PDF ---------------------------------------------------------------------
-
-export async function exportPDF() {
-  const { jsPDF } = window.jspdf;
-  const pdf = new jsPDF({ unit: 'pt', format: 'letter' });
-  const sheets = document.querySelectorAll('#report-root .sheet');
-  // Capture at full size: temporarily drop the preview scale.
-  const saved = [];
-  sheets.forEach((s) => saved.push([s, s.style.transform]));
-  sheets.forEach((s) => { s.style.transform = 'none'; });
-  try {
-    let first = true;
-    for (const s of sheets) {
-      const canvas = await html2canvas(s, { scale: 2, backgroundColor: '#ffffff' });
-      const imgW = 612;
-      const imgH = (canvas.height * imgW) / canvas.width;
-      const imgData = canvas.toDataURL('image/png');
-      if (!first) pdf.addPage();
-      first = false;
-      pdf.addImage(imgData, 'PNG', 0, 0, imgW, imgH);
-    }
-  } finally {
-    saved.forEach(([s, t]) => { s.style.transform = t; });
-    fitSheets();
-  }
-  const p = state.data.property;
-  const name = `${p.apn || 'appraisal'}_${p.reportDate || ''}`.replace(/[^\w\-]/g, '_');
-  pdf.save(`${name}.pdf`);
-}
+// PDF export is handled by the browser: the top-bar "Print" button calls
+// window.print(), and the @media print rules in app.css lay the sheets out at
+// exact 8.5×11 with one sheet per page. This gives vector text, small files,
+// and zero client-side dependencies (jsPDF/html2canvas were removed).
 

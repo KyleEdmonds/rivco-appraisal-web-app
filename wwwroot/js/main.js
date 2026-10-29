@@ -4,7 +4,7 @@
 // Right pane: report staging. Draggable split handle between them.
 // ---------------------------------------------------------------------------
 import { api, state, saveCurrent, loadAppraisal, newAppraisal, fmtCurrency, fmtNumber, fmtAcresNum, titleCase, normalizeCity, fmtDate, computeAppraisal, scheduleAutosave, exportWip, importWip, workspace, activeTab, addTab, closeTab } from './core.js';
-import { renderForm, setTab, loadRepo } from './form.js';
+import { renderForm, setTab, loadRepo, commitCoverApn } from './form.js';
 import { renderReport, fitSheets, zoomBy, zoomFit } from './report.js';
 
 function el(tag, attrs = {}, ...children) {
@@ -904,6 +904,7 @@ function apnSearchBox() {
         input.value = apnInput;
         apnSugg = [];
         sugg.style.display = 'none';
+        commitCoverApn(); // exit the cover APN chip's editing mode before re-render
         if (r.kind === 'transfer') openTransferComp(r);
         else if (r.kind === 'parcel') showPinPage(r.apn);
         else openById(r.id);
@@ -964,7 +965,11 @@ function apnSearchBox() {
     }, 150);
   });
   input.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') { apnSugg = []; renderSugg(); }
+    if (e.key === 'Escape') {
+      apnSugg = []; renderSugg();
+      // If this is the cover's APN search, Escape exits editing mode (back to the chip).
+      if (box.closest('#cover-search-slot')) { commitCoverApn(); renderForm(); }
+    }
   });
   document.addEventListener('click', (e) => {
     if (!box.isConnected) return; // stale instance (a newer box replaced it)

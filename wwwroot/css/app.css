@@ -243,6 +243,45 @@ input, select, textarea { font-family: inherit; }
 }
 .cover-setup .cs-date:focus { outline: 2px solid var(--navy); outline-offset: -1px; }
 .cover-setup .cs-case { margin-left: auto; }
+/* APN chip: read-only badge shown in the setup bar when an APN is set. */
+.cover-setup .cs-apn-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 10px;
+  background: var(--bg-soft);
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  font-size: 13px;
+  min-width: 0;
+}
+.cover-setup .cs-apn-chip-apn {
+  font-weight: 700;
+  color: var(--navy);
+  font-variant-numeric: tabular-nums;
+  flex: 0 0 auto;
+}
+.cover-setup .cs-apn-chip-addr {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.cover-setup .cs-apn-chip-change {
+  flex: 0 0 auto;
+  margin-left: auto;
+  border: 1px solid var(--border-input);
+  background: #fff;
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.cover-setup .cs-apn-chip-change:hover { background: var(--bg-soft); border-color: var(--navy); color: var(--navy); }
 /* WIP dropdown */
 .wip-wrap { position: relative; }
 .wip-menu {
@@ -1063,9 +1102,13 @@ textarea.inp { height: auto; padding: 4px 6px; resize: vertical; line-height: 1.
 .trc-notes { margin-top: 8px; font-size: 11px; line-height: 1.5; color: #475569; }
 
 /* transfer cover — sectioned grid (Property ID | Transfer / Valuation / Appraiser | Notes) */
-.trc2-inner { display: flex; flex-direction: column; gap: 14px; }
+/* Cover layout: text fields on the left, subject image on the right (~40%). */
+.trc2-inner { display: flex; flex-direction: row; gap: 16px; height: 100%; }
 .sheet-body .trc2-inner { padding: 0; }
-.trc2-row { display: flex; gap: 14px; min-height: 0; }
+.trc2-left { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 14px; }
+/* Boxes size to their content; the last (notes) box grows to fill the column. */
+.trc2-left .trc2-box { flex: 0 0 auto; }
+.trc2-left .trc2-box:last-child { flex: 1 1 auto; }
 .trc2-box { flex: 1; min-width: 0; display: flex; flex-direction: column; border: 2px solid var(--navy); background: #fff; }
 .trc2-box > header {
   background: var(--navy); color: #fff; padding: 6px 12px;
@@ -1078,8 +1121,10 @@ textarea.inp { height: auto; padding: 4px 6px; resize: vertical; line-height: 1.
 .trc2-k { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
 .trc2-v { font-size: 13px; font-weight: 600; color: #0f172a; font-variant-numeric: tabular-nums; }
 .trc2-notes { flex: 1; font-size: 11px; line-height: 1.6; color: #475569; }
-.trc2-photo { flex: 1; display: flex; align-items: center; justify-content: center; background: var(--bg-soft); border: 1px solid var(--border-soft); min-height: 120px; padding: 8px; }
-.trc2-photo img { max-width: 100%; max-height: 320px; object-fit: contain; }
+/* Subject image: right column, full height, ~40% width. */
+.trc2-photo { flex: 0 0 40%; width: 40%; align-self: stretch; display: flex; align-items: center; justify-content: center; background: var(--bg-soft); border: 1px solid var(--border-soft); padding: 10px; min-height: 0; }
+.trc2-photo-empty { border-style: dashed; }
+.trc2-photo img { max-width: 100%; max-height: 100%; object-fit: contain; }
 .trc2-photo-ph { font-size: 11px; color: var(--muted-2); letter-spacing: 0.08em; text-transform: uppercase; }
 /* Report image cells (parcel map / property image on the subject sheet) */
 .img-cell { width: 100%; display: flex; align-items: center; justify-content: center; border: 1px solid var(--border-soft); background: #fff; margin: 6px 0 10px; padding: 8px; }
@@ -1336,15 +1381,28 @@ textarea.inp { height: auto; padding: 4px 6px; resize: vertical; line-height: 1.
 }
 #boot-error button:hover { background: #fee2e2; }
 
-/* --- print: sheets only, full size --- */
+/* --- print: sheets only, exact 8.5×11, one sheet per page --- */
+/* The top-bar "Print" button calls window.print(); these rules lay the report
+   out as clean letter pages (vector text, no rasterization, no deps). */
+@page { size: letter; margin: 0; }
 @media print {
-  body { overflow: visible; }
+  html, body { width: 100%; height: auto; overflow: visible; background: #fff; }
   #topbar, .pane-left, .split-handle, .staging-toolbar { display: none !important; }
-  #main, .split, .pane-right { display: block; width: 100%; height: auto; }
-  #report-root { display: block; overflow: visible; padding: 0; }
-  .sheet-scale { width: auto !important; height: auto !important; overflow: visible; }
+  #main, .split, .pane-right { display: block !important; width: 100%; height: auto; }
+  #report-root { display: block !important; overflow: visible !important; padding: 0 !important; gap: 0 !important; }
+  .sheet-scale { width: auto !important; height: auto !important; overflow: visible !important; }
   .sheet-scale .sheet { transform: none !important; }
-  .sheet { page-break-after: always; border: 0; }
+  .sheet {
+    width: 8.5in;
+    height: 11in;
+    border: 0;
+    box-shadow: none;
+    overflow: hidden;
+    page-break-after: always;
+    break-after: page;
+  }
+  /* Don't emit a trailing blank page after the last sheet. */
+  .sheet-scale:last-child .sheet { page-break-after: auto; break-after: auto; }
 }
 
 /* --- list view ---------------------------------------------------------------- */
