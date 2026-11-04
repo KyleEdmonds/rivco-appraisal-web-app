@@ -3,7 +3,7 @@
 // Left pane: control bar (dates + APN search) + tabbed form
 // Right pane: report staging. Draggable split handle between them.
 // ---------------------------------------------------------------------------
-import { api, state, saveCurrent, loadAppraisal, newAppraisal, fmtCurrency, fmtNumber, fmtAcresNum, titleCase, normalizeCity, fmtDate, computeAppraisal, scheduleAutosave, exportWip, importWip, workspace, activeTab, addTab, closeTab, snapshotActiveTab, restoreWorkspaceLocal, clearLocalWorkspace, migrateSubjectImage } from './core.js';
+import { api, state, saveCurrent, loadAppraisal, newAppraisal, fmtCurrency, fmtNumber, fmtAcresNum, titleCase, normalizeCity, fmtDate, computeAppraisal, scheduleAutosave, exportWip, importWip, workspace, activeTab, addTab, closeTab, snapshotActiveTab, restoreWorkspaceLocal, clearLocalWorkspace, migrateSubjectImage, normalizeParcel } from './core.js';
 import { renderForm, setTab, loadRepo, commitCoverApn } from './form.js';
 import { renderReport, fitSheets, zoomBy, zoomFit } from './report.js';
 
@@ -282,39 +282,99 @@ async function showLanding() {
 
   setTopBarLanding(true);
 
-  // Parcel search results table (populated as the user types).
+  // Unified search results table (appraisals + transfer comps + county parcels),
+  // populated as the user types. Same three sources the top-bar box uses.
   const results = el('div', { class: 'landing-results' });
+  let lastRows = [];
+  const openRow = (r) => {
+    if (r.kind === 'appraisal') openById(r.id);
+    else if (r.kind === 'transfer') openTransferComp(r);
+    else showPinPage(r.apn);
+  };
   const renderResults = (rows) => {
+    lastRows = rows;
     if (!rows.length) {
-      results.replaceChildren(el('div', { class: 'landing-results-empty' }, 'No parcels match.'));
+      results.replaceChildren(el('div', { class: 'landing-results-empty' }, 'No matches.'));
       return;
     }
     results.replaceChildren(
       el('table', { class: 'list-table landing-results-table' },
-        el('thead', {}, el('tr', {}, ['APN', 'Address', 'City', 'Class', 'Acres'].map((h) => el('th', {}, h)))),
-        el('tbody', {}, rows.map((r) => el('tr', { class: 'clickable', onclick: () => showPinPage(r.apn) },
-          el('td', {}, r.apn),
+        el('thead', {}, el('tr', {}, ['APN', 'Address', 'City', 'Type'].map((h) => el('th', {}, h)))),
+        el('tbody', {}, rows.map((r) => el('tr', { class: 'clickable', onclick: () => openRow(r) },
+          el('td', {}, r.apn || '—'),
           el('td', {}, titleCase(r.address) || '—'),
           el('td', {}, normalizeCity(r.city) || '—'),
-          el('td', {}, titleCase(r.class) || '—'),
-          el('td', { class: 'num' }, r.acreage ? fmtAcresNum(r.acreage) : '—'),
+          el('td', {}, r.kind === 'appraisal' ? 'Appraisal' : r.kind === 'transfer' ? 'Transfer' : 'Parcel'),
         ))),
       ),
     );
   };
 
-  const input = el('input', { class: 'landing-search-input', placeholder: 'Search APN or address…' });
+  const input = el('input', {
+    class: 'landing-search-input',
+    placeholder: 'Search APN or address…',
+    'aria-label': 'Search APN or address',
+  });
   let searchTimer = null;
+  const runSearch = async (q) => {
+    results.replaceChildren(el('div', { class: 'landing-results-empty' }, 'Searching…'));
+    const lq = q.toLowerCase();
+    // Book number = first 3 digits of the APN. Match on the APN prefix so typing
+    // '1' surfaces every book that starts with 1, then order by book number.
+    const byBook = (a, b) => {
+      const aP = String(a.apn || '').startsWith(q) ? 0 : 1;
+      const bP = String(b.apn || '').startsWith(q) ? 0 : 1;
+      if (aP !== bP) return aP - bP;
+      return String(a.apn || '').localeCompare(String(b.apn || ''), undefined, { numeric: true });
+    };
+    let appRows = [], transRows = [], parcelRows = [];
+    try { appRows = await api.listAppraisals(); } catch { appRows = []; }
+    try { transRows = await api.searchTransferComps(q); } catch { transRows = []; }
+    try { parcelRows = await api.parcelSearch(q); } catch { parcelRows = []; }
+    const appSugg = (Array.isArray(appRows) ? appRows : [])
+      .filter((r) => String(r.apn || '').startsWith(q) || String(r.address || '').toLowerCase().includes(lq) || String(r.city || '').toLowerCase().includes(lq))
+      .map((r) => ({ kind: 'appraisal', id: r.id, apn: r.apn, address: r.address, city: r.city }));
+    const transSugg = (Array.isArray(transRows) ? transRows : [])
+      .map((r) => ({ kind: 'transfer', ...r }));
+    // County parcels surface PINs with no appraisal/transfer yet; dedupe by APN.
+    const takenApns = new Set([...appSugg, ...transSugg].map((r) => String(r.apn || '').trim()));
+    const parcelSugg = (Array.isArray(parcelRows) ? parcelRows : [])
+      .filter((r) => !takenApns.has(String(r.apn || '').trim()))
+      .map((r) => ({ kind: 'parcel', ...r }));
+    renderResults([...appSugg, ...transSugg, ...parcelSugg].sort(byBook).slice(0, 20));
+  };
   input.addEventListener('input', () => {
     const q = input.value.trim();
     clearTimeout(searchTimer);
-    if (!q) { results.replaceChildren(); return; }
-    searchTimer = setTimeout(async () => {
-      let rows = [];
-      try { rows = await api.parcelSearch(q); } catch { rows = []; }
-      renderResults(Array.isArray(rows) ? rows : []);
-    }, 150);
+    if (!q) { lastRows = []; results.replaceChildren(); return; }
+    searchTimer = setTimeout(() => runSearch(q), 150);
   });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && lastRows.length) openRow(lastRows[0]);
+  });
+
+  // Recent appraisals panel (last 5, most recently updated first).
+  const recentPanel = el('div', { class: 'landing-recent' },
+    el('div', { class: 'landing-recent-head' },
+      el('h2', { class: 'landing-recent-title' }, 'Recent Appraisals'),
+      el('button', { class: 'linklike', onclick: showList }, 'View all →'),
+    ),
+  );
+  if (!recent.length) {
+    recentPanel.append(el('div', { class: 'landing-recent-empty' }, 'No appraisals yet — start one below.'));
+  } else {
+    recentPanel.append(el('div', { class: 'landing-recent-list' },
+      recent.slice(0, 5).map((r) => el('div', {
+        class: 'landing-recent-row clickable',
+        onclick: () => openById(r.id),
+      },
+        el('div', { class: 'rr-apn' }, r.apn || '—'),
+        el('div', { class: 'rr-addr' }, titleCase(r.address) || '—'),
+        el('div', { class: 'rr-value num' }, r.finalValue != null ? fmtCurrency(r.finalValue) : '—'),
+        el('div', { class: 'rr-date' }, r.updatedAt ? new Date(r.updatedAt).toLocaleDateString() : '—'),
+      )),
+    ));
+  }
 
   main.replaceChildren(
     el('div', { class: 'landing' },
@@ -325,23 +385,23 @@ async function showLanding() {
       el('div', { class: 'landing-search' }, input),
       results,
       el('div', { class: 'landing-cards' },
-        el('button', { class: 'landing-card', onclick: () => showWorkQueue('transfers') },
-          el('div', { class: 'lc-icon' }, '🏢'),
-          el('div', { class: 'lc-title' }, 'Transfer Queue'),
-        ),
-        el('button', { class: 'landing-card', onclick: () => showWorkQueue('appeals') },
-          el('div', { class: 'lc-icon' }, '⚖️'),
-          el('div', { class: 'lc-title' }, 'Appeal Queue'),
-        ),
-        el('button', { class: 'landing-card', onclick: openNew },
+        el('button', { class: 'landing-card primary', 'aria-label': 'Start a new appraisal', onclick: openNew },
           el('div', { class: 'lc-icon' }, '📝'),
           el('div', { class: 'lc-title' }, 'New Appraisal'),
+          el('div', { class: 'lc-desc' }, 'Start a blank report'),
+        ),
+        el('button', { class: 'landing-card', 'aria-label': 'Open the transfer work queue', onclick: () => showWorkQueue('transfers') },
+          el('div', { class: 'lc-icon' }, '🏢'),
+          el('div', { class: 'lc-title' }, 'Transfer Queue'),
+          el('div', { class: 'lc-desc' }, 'Screen the county transfer file'),
+        ),
+        el('button', { class: 'landing-card', 'aria-label': 'Open the appeal work queue', onclick: () => showWorkQueue('appeals') },
+          el('div', { class: 'lc-icon' }, '⚖️'),
+          el('div', { class: 'lc-title' }, 'Appeal Queue'),
+          el('div', { class: 'lc-desc' }, 'Open appeals to be worked'),
         ),
       ),
-      el('div', { class: 'landing-recent' },
-        el('button', { class: 'linklike', onclick: showList },
-          `Recent Appraisals${recent.length ? ` (${recent.length} saved)` : ''} →`),
-      ),
+      recentPanel,
     ),
   );
 }
@@ -1486,7 +1546,7 @@ function renderPinBody(apn, parcel, mine) {
   const taxHistory = [...(parcel.history || [])].sort((a, b) => Number(b.TaxYear || 0) - Number(a.TaxYear || 0));
 
   // Left (main) column: characteristics, buildings, sales + tax history,
-  // street view. Right column: the parcel map on its own.
+  // past valuations. Right column: the parcel map on its own.
   const left = el('div', { class: 'pin-col pin-col-main' },
     el('div', { class: 'pin-section' },
       el('div', { class: 'pin-section-title' }, 'Characteristics'),
@@ -1557,11 +1617,7 @@ function renderPinBody(apn, parcel, mine) {
               ))),
             ),
           ),
-    ),
-    parcel.strview ? el('div', { class: 'pin-section' },
-      el('div', { class: 'pin-section-title' }, 'Street View'),
-      el('img', { class: 'pin-strview', src: parcel.strview, alt: 'Street view', loading: 'lazy' }))
-      : null,
+    )
   );
 
   // Right column: the parcel map on its own (with the image-search button in

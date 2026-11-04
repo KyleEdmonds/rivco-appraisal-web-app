@@ -208,16 +208,20 @@ input, select, textarea { font-family: inherit; }
 .case-btn:hover { background: #f1f5f9; color: var(--text); }
 .case-btn.active { background: var(--navy); color: #fff; font-weight: 700; }
 .case-btn.active:hover { background: var(--navy-light); }
+/* keyboard focus rings for cover-tab controls */
+.case-btn:focus-visible { outline: 2px solid var(--gold); outline-offset: -2px; }
+.cs-apn-chip-change:focus-visible,
+.cs-apn-chip-view:focus-visible { outline: 2px solid var(--gold); outline-offset: 1px; }
 /* cover-tab setup bar: APN/Address search (top) + Effective/Report dates and
    the case-type selector (bottom row, selector pushed right) */
 .cover-setup {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
   margin-bottom: 16px;
   background: var(--panel);
   border: 2px solid var(--navy);
-  padding: 14px 16px 16px;
+  padding: 12px 14px 14px;
   box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
   position: relative;
   overflow: hidden;
@@ -240,7 +244,7 @@ input, select, textarea { font-family: inherit; }
   color: var(--muted);
 }
 .cover-setup .cs-search { width: 100%; }
-.cover-setup .cs-search-slot .apn-box { width: 100%; height: 36px; }
+.cover-setup .cs-search-slot .apn-box { width: 100%; height: 30px; }
 .cover-setup .cs-search-slot .apn-box input { font-size: 13px; }
 .cover-setup .cs-row { display: flex; align-items: flex-end; gap: 14px; flex-wrap: wrap; }
 .cover-setup .cs-date {
@@ -254,6 +258,24 @@ input, select, textarea { font-family: inherit; }
 }
 .cover-setup .cs-date:focus { outline: 2px solid var(--navy); outline-offset: -1px; }
 .cover-setup .cs-case { margin-left: auto; }
+/* cover completion badge (right of the case-type selector) */
+.cover-setup .cs-complete {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  background: var(--bg-soft);
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  padding: 4px 10px;
+  white-space: nowrap;
+}
+.cover-setup .cs-complete.done {
+  color: #fff;
+  background: var(--gold);
+  border-color: var(--gold);
+}
 /* APN chip: read-only badge shown in the setup bar when an APN is set. */
 .cover-setup .cs-apn-chip {
   display: flex;
@@ -580,6 +602,11 @@ input, select, textarea { font-family: inherit; }
 }
 .tab:hover { color: #fff; }
 .tab.active { background: var(--teal-dark); color: #fff; font-weight: 700; }
+/* tab completion glyph (✓ done / • empty) */
+.tab .tab-status { margin-left: 6px; font-size: 10px; color: rgba(255, 255, 255, 0.35); }
+.tab .tab-status.done { color: var(--gold-light); }
+.tab.active .tab-status { color: rgba(255, 255, 255, 0.5); }
+.tab.active .tab-status.done { color: var(--gold-light); }
 .tab-content {
   flex: 1 1 auto;
   min-height: 0;
@@ -711,6 +738,16 @@ textarea.inp { height: auto; padding: 5px 7px; resize: vertical; line-height: 1.
 .field-grid.c4 { grid-template-columns: repeat(4, 1fr); }
 /* keep text inputs the same height as the number/select inputs in a row */
 .field-grid input.inp { height: 30px; }
+/* sub-group label inside a section body (e.g. Transfer / Valuation / Appraiser) */
+.field-group { display: flex; flex-direction: column; gap: 6px; }
+.field-group + .field-group { margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--border-soft); }
+.field-group-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+}
 
 /* stipulation value-category table (Cover tab) */
 .vc-wrap { margin-top: 12px; }
@@ -790,6 +827,21 @@ textarea.inp { height: auto; padding: 5px 7px; resize: vertical; line-height: 1.
 .weight-row .w-pct { font-size: 13px; color: var(--muted-2); }
 .total-weight { display: flex; justify-content: space-between; margin-top: 8px; font-size: 13px; color: var(--muted); }
 .total-weight b { font-variant-numeric: tabular-nums; }
+/* "Include Cost Approach" toggle (reconcile tab) — on/off switch for the cost approach. */
+.cost-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+  border: 1px solid var(--border);
+  background: #f8fafc;
+  font-size: 13px;
+  font-weight: 600;
+  color: #334155;
+  cursor: pointer;
+}
+.cost-toggle input { width: 15px; height: 15px; accent-color: var(--navy); cursor: pointer; }
 
 /* final value field (reconcile tab) */
 .final-field {
@@ -839,8 +891,10 @@ textarea.inp { height: auto; padding: 5px 7px; resize: vertical; line-height: 1.
 /* Action buttons row (below the filters). */
 .repo-actions { display: flex; gap: 8px; margin-bottom: 8px; }
 .repo-results { max-height: 260px; overflow: auto; border: 1px solid var(--border-soft); background: #fff; }
-/* Table fits the pane width (no forced min-width → no horizontal scroll). */
-.repo-results table { width: 100%; border-collapse: collapse; font-size: 13px; }
+/* Fixed layout: column widths come from the header row, so the table always
+   fits the pane width (no horizontal scroll). The address column is the only
+   flexible one and absorbs the leftover space. */
+.repo-results table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 13px; }
 .repo-results th {
   position: sticky; top: 0;
   background: var(--navy);
@@ -851,17 +905,18 @@ textarea.inp { height: auto; padding: 5px 7px; resize: vertical; line-height: 1.
   text-align: left;
   padding: 5px 8px;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .repo-results th.sortable { cursor: pointer; user-select: none; }
 .repo-results th.sortable:hover { background: var(--navy-dark); }
 .repo-results th .sort-ind { opacity: 0.5; margin-left: 3px; }
 .repo-results th.sorted .sort-ind { opacity: 1; }
-.repo-results td { padding: 4px 6px; border-bottom: 1px solid #e2e8f0; white-space: nowrap; }
-/* Long text columns truncate with an ellipsis so the table fits the pane
-   width without horizontal scrolling. */
-.repo-results td.addr { max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
-.repo-results td.city { max-width: 100px; overflow: hidden; text-overflow: ellipsis; }
-.repo-results td.type { max-width: 110px; overflow: hidden; text-overflow: ellipsis; }
+.repo-results td { padding: 4px 6px; border-bottom: 1px solid #e2e8f0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Address column: street on top, city as a subtle second line (both truncate). */
+.repo-results td.addr { padding: 4px 8px; }
+.repo-results td.addr .addr-main { font-weight: 600; color: #0f172a; overflow: hidden; text-overflow: ellipsis; }
+.repo-results td.addr .addr-sub { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; }
 .repo-results tr:hover td { background: var(--bg); }
 .repo-results tr.selected td { background: var(--gold-soft); font-weight: 600; }
 .repo-results .num { text-align: right; font-variant-numeric: tabular-nums; }
@@ -1168,64 +1223,58 @@ textarea.inp { height: auto; padding: 5px 7px; resize: vertical; line-height: 1.
 .trc-appraiser-meta { font-size: 11px; color: var(--muted); text-align: right; }
 .trc-notes { margin-top: 8px; font-size: 11px; line-height: 1.5; color: #475569; }
 
-/* transfer cover — sectioned grid (Property ID | Transfer / Valuation / Appraiser | Notes) */
-/* Cover layout: text fields on the left, subject image on the right (~40%). */
-.trc2-inner { display: flex; flex-direction: row; gap: 16px; height: 100%; }
-.sheet-body .trc2-inner { padding: 0; }
-.trc2-left { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 14px; }
-/* Boxes size to their content; the last (notes) box grows to fill the column. */
-.trc2-left .trc2-box { flex: 0 0 auto; }
-.trc2-left .trc2-box:last-child { flex: 1 1 auto; }
-.trc2-box { flex: 1; min-width: 0; display: flex; flex-direction: column; border: 2px solid var(--navy); background: #fff; }
-.trc2-box > header {
-  background: var(--navy); color: #fff; padding: 6px 12px;
+/* Unified cover layout — shared by the Transfer and General covers.
+   Full-width stacked "section boxes" (navy header bar + label/value grid)
+   with a full-width parcel photo at the bottom. */
+.cov-inner { display: flex; flex-direction: column; gap: 16px; height: 100%; }
+.sheet-body .cov-inner { padding: 0; }
+/* Section box: navy header bar over a bordered body. Boxes keep their content
+   size; the photo below absorbs the leftover vertical space. */
+.cov-box { flex: 0 0 auto; border: 1px solid var(--navy); background: #fff; display: flex; flex-direction: column; }
+.cov-box > header {
+  background: var(--navy); color: #fff; padding: 7px 12px;
   font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.12em;
 }
-.trc2-body { flex: 1; padding: 12px 14px; display: flex; flex-direction: column; min-height: 0; }
-.trc2-fields { display: flex; flex-direction: column; gap: 12px; }
-.trc2-fields.trc2-cols2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 28px; }
-.trc2-field { display: flex; flex-direction: column; gap: 2px; }
-.trc2-k { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
-.trc2-v { font-size: 13px; font-weight: 600; color: #0f172a; font-variant-numeric: tabular-nums; }
-.trc2-notes { flex: 1; font-size: 11px; line-height: 1.6; color: #475569; }
-/* Subject image: right column, full height, ~40% width. */
-.trc2-photo { flex: 0 0 40%; width: 40%; align-self: stretch; display: flex; align-items: center; justify-content: center; background: var(--bg-soft); border: 1px solid var(--border-soft); padding: 10px; min-height: 0; }
-.trc2-photo-empty { border-style: dashed; }
-.trc2-photo img { max-width: 100%; max-height: 100%; object-fit: contain; }
-.trc2-photo-ph { font-size: 11px; color: var(--muted-2); letter-spacing: 0.08em; text-transform: uppercase; }
+.cov-body { padding: 12px 14px; display: flex; flex-direction: column; }
+/* Label/value grid — auto-fits columns to the box width so 2–7 fields all
+   lay out evenly (empty tracks collapse). */
+.cov-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px 20px; }
+.cov-field { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.cov-k { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+.cov-v { font-size: 14px; font-weight: 600; color: #0f172a; font-variant-numeric: tabular-nums; }
+/* Emphasized value (headline money figures in the Valuation box). */
+.cov-v-lg { font-size: 20px; font-weight: 700; color: var(--navy); }
+/* Notes body. */
+.cov-notes { font-size: 13px; line-height: 1.6; color: #475569; white-space: pre-wrap; }
+/* Valuation box: both rows share a fixed 4-column grid so the columns line up
+   vertically; Notes spans the two right-hand (Enrolled) columns. */
+.cov-grid-4 { grid-template-columns: repeat(4, 1fr); }
+.cov-field-span2 { grid-column: span 2; }
+/* Valuation box: money grid on row 1, appraiser row on row 2. */
+.cov-val { display: flex; flex-direction: column; gap: 12px; }
+/* Parcel photo — full-width, navy header. Grows to fill the leftover vertical
+   space so the cover always fits one page; the image is contained (no crop). */
+.cov-photo { flex: 1 1 auto; min-height: 0; border: 1px solid var(--navy); background: #fff; display: flex; flex-direction: column; }
+.cov-photo-cap { flex: 0 0 auto; background: var(--navy); color: #fff; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.12em; padding: 7px 12px; }
+.cov-photo img { flex: 1; min-height: 0; width: 100%; height: 100%; object-fit: contain; }
+.cov-photo-empty { border-style: dashed; }
+.cov-photo-ph { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; font-size: 12px; color: var(--muted-2); letter-spacing: 0.08em; text-transform: uppercase; }
 
-/* transfer cover — presentable redesign (hero + detail grid + value cards + image strip) */
-.cv-inner { display: flex; flex-direction: column; gap: 22px; height: 100%; }
-.sheet-body .cv-inner { padding: 0; }
-/* Hero headline */
-/* Single row of detail fields (e.g. Transfer Details on the cover).
-   Fields are left-aligned and sized to their content so the row packs
-   together instead of stretching across the full page width. */
-.cv-row { display: flex; flex-wrap: wrap; gap: 10px 48px; }
-.cv-row + .cv-row { margin-top: 12px; }
-.cv-row .cv-field { min-width: 100px; }
-/* Section label */
-.cv-sec { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.12em; color: var(--navy); padding-bottom: 5px; margin-bottom: 12px; border-bottom: 1px solid var(--border-soft); }
-/* Detail grid */
-.cv-field { display: flex; flex-direction: column; gap: 2px; }
-.cv-k { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
-.cv-v { font-size: 16px; font-weight: 600; color: #0f172a; font-variant-numeric: tabular-nums; }
-/* Value cards */
-.cv-cards { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; }
-.cv-card { border: 1px solid var(--navy); background: var(--bg-soft); padding: 12px 14px; display: flex; flex-direction: column; gap: 4px; }
-.cv-card-k { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
-.cv-card-v { font-size: 20px; font-weight: 700; color: var(--navy); font-variant-numeric: tabular-nums; }
-/* Subject image — full-width satellite photo with a navy section header.
-   The image is shown edge-to-edge at its native 16:9 ratio (no letterboxed
-   gray box), so the parcel outline and surroundings read cleanly. */
-.cv-photo { border: 1px solid var(--navy); background: #fff; display: flex; flex-direction: column; }
-.cv-photo-cap { background: var(--navy); color: #fff; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.12em; padding: 7px 12px; }
-.cv-photo img { display: block; width: 100%; height: auto; }
-.cv-photo-empty { border-style: dashed; }
-.cv-photo-ph { font-size: 12px; color: var(--muted-2); letter-spacing: 0.08em; text-transform: uppercase; padding: 40px 0; }
-/* Notes */
-.cv-notes { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
-.cv-notes-body { flex: 1; font-size: 13px; line-height: 1.6; color: #475569; }
+/* Subject sheet: a stack of the same unified section boxes as the cover. The
+   boxes keep their content size; the last box (the parcel map) grows to absorb
+   the leftover vertical space so the sheet always fits one page. */
+.cov-stack { display: flex; flex-direction: column; gap: 16px; height: 100%; }
+.sheet-body .cov-stack { padding: 0; }
+.cov-stack .cov-box:last-child { flex: 1 1 auto; min-height: 0; }
+.cov-stack .cov-box:last-child .cov-body { flex: 1 1 auto; min-height: 0; }
+/* Subject photos — a grid of one or more photos that fills the box. A single
+   photo is shown full (contained); multiple photos tile as uniform thumbnails. */
+.cov-photos { flex: 1; min-height: 0; display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); grid-auto-rows: 1fr; }
+.cov-photos.single { grid-template-columns: 1fr; }
+.cov-photo-cell { border: 1px solid var(--border-soft); background: #fff; display: flex; align-items: center; justify-content: center; min-height: 0; overflow: hidden; }
+.cov-photo-cell img { width: 100%; height: 100%; object-fit: cover; }
+.cov-photos.single .cov-photo-cell img { object-fit: contain; }
+.cov-photos-empty { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; border: 1px dashed var(--border-soft); color: var(--muted-2); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; }
 
 /* Report image cells (parcel map / property image on the subject sheet) */
 .img-cell { width: 100%; display: flex; align-items: center; justify-content: center; border: 1px solid var(--border-soft); background: #fff; margin: 6px 0 10px; padding: 8px; }
@@ -1428,11 +1477,23 @@ textarea.inp { height: auto; padding: 5px 7px; resize: vertical; line-height: 1.
 .img-panel-title { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); }
 .img-panel-modes { display: flex; gap: 6px; }
 .img-mode-btn { font-size: 11px; padding: 3px 10px; }
-.img-panel-preview { position: relative; min-height: 140px; max-height: 280px; display: flex; align-items: center; justify-content: center; padding: 10px; border: 2px dashed var(--border-soft); transition: border-color 0.15s, background 0.15s; }
-.img-panel-preview.drag { border-color: var(--gold); background: #fff8e6; }
-.img-panel-preview img { max-width: 100%; max-height: 260px; object-fit: contain; }
-.img-panel-empty { font-size: 11px; color: var(--muted-2); text-transform: uppercase; letter-spacing: 0.08em; }
-.img-panel-actions { position: absolute; top: 8px; right: 8px; display: flex; gap: 4px; }
+/* multi-photo grid (subject photos panel): thumbnails + a trailing "add" tile */
+.img-panel-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; padding: 10px; }
+.img-panel.drag { outline: 2px dashed var(--gold); outline-offset: -2px; background: #fff8e6; }
+.img-thumb { position: relative; aspect-ratio: 4 / 3; border: 1px solid var(--border-soft); background: var(--bg-soft); display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.img-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.img-thumb-ph { font-size: 10px; color: var(--muted-2); text-transform: uppercase; letter-spacing: 0.06em; }
+.img-thumb-rm { position: absolute; top: 4px; right: 4px; font-size: 10px; padding: 2px 6px; }
+.img-thumb-add { cursor: pointer; border: 2px dashed var(--border-soft); background: var(--bg-soft); transition: border-color 0.15s, background 0.15s; }
+.img-thumb-add:hover { border-color: var(--navy); }
+.img-thumb-add-inner { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.img-thumb-add-plus { font-size: 20px; font-weight: 700; color: var(--muted-2); line-height: 1; }
+.img-thumb-add-label { font-size: 10px; color: var(--muted-2); text-transform: uppercase; letter-spacing: 0.06em; }
+/* single cover-photo preview (cover tab) */
+.cover-photo-preview { padding: 10px; display: flex; flex-direction: column; gap: 6px; }
+.cover-photo-preview img { width: 100%; max-height: 240px; object-fit: contain; border: 1px solid var(--border-soft); background: var(--bg-soft); }
+.cover-photo-ph { width: 100%; aspect-ratio: 4 / 3; display: flex; align-items: center; justify-content: center; border: 1px dashed var(--border-soft); color: var(--muted-2); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
+.cover-photo-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
 
 /* outbuilding rows */
 .ob-row { border: 1px solid var(--border-soft); padding: 8px; margin-bottom: 8px; display: flex; flex-direction: column; gap: 8px; }
@@ -1613,7 +1674,30 @@ textarea.inp { height: auto; padding: 5px 7px; resize: vertical; line-height: 1.
 .lc-icon { font-size: 26px; line-height: 1; }
 .lc-title { font-size: 15px; font-weight: 700; letter-spacing: 0.02em; }
 .lc-desc { font-size: 12px; color: var(--muted); line-height: 1.4; }
-.landing-recent { width: 100%; max-width: 760px; margin-top: 16px; }
+.landing-recent { width: 100%; max-width: 760px; margin-top: 24px; }
+.landing-recent-head {
+  display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 8px;
+}
+.landing-recent-title {
+  font-size: 13px; font-weight: 700; color: var(--navy); letter-spacing: 0.02em; margin: 0;
+}
+.landing-recent-list {
+  border: 1px solid var(--border-input); border-radius: 6px; overflow: hidden; background: #fff;
+}
+.landing-recent-row {
+  display: grid; grid-template-columns: 120px 1fr 110px 90px; gap: 12px; align-items: center;
+  padding: 9px 12px; font-size: 13px; border-bottom: 1px solid var(--border-soft);
+}
+.landing-recent-row:last-child { border-bottom: none; }
+.landing-recent-row:hover { background: var(--bg-soft); }
+.rr-apn { font-weight: 600; color: #334155; }
+.rr-addr { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rr-value { text-align: right; font-variant-numeric: tabular-nums; }
+.rr-date { color: var(--muted); font-size: 12px; text-align: right; }
+.landing-recent-empty {
+  text-align: center; color: var(--muted); font-size: 13px;
+  padding: 18px; border: 1px dashed var(--border-input); border-radius: 6px;
+}
 .linklike {
   background: none; border: none; padding: 0; cursor: pointer; font: inherit;
   font-size: 12px; color: var(--muted); text-decoration: underline; text-underline-offset: 2px;
@@ -1639,6 +1723,15 @@ textarea.inp { height: auto; padding: 5px 7px; resize: vertical; line-height: 1.
   padding: 18px; border: 1px dashed var(--border-input); border-radius: 6px;
 }
 .landing-results-table { width: 100%; }
+
+.landing-card:focus-visible { outline: 2px solid var(--navy); outline-offset: 2px; }
+
+/* Responsive: stack the workflow cards on narrow screens */
+@media (max-width: 640px) {
+  .landing-cards { grid-template-columns: 1fr; }
+  .landing-recent-row { grid-template-columns: 90px 1fr 90px; }
+  .rr-date { display: none; }
+}
 
 /* PIN page report-creation buttons */
 .pin-actions { display: flex; align-items: center; gap: 6px; }
@@ -1970,12 +2063,6 @@ tr.tq-done td { color: #94a3b8; }
 .pin-def { display: flex; flex-direction: column; gap: 2px; }
 .pin-def-k { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted, #64748b); }
 .pin-def-v { font-size: 14px; font-weight: 600; color: var(--ink, #1e293b); word-break: break-word; }
-.pin-strview {
-  max-width: 420px;
-  width: 100%;
-  border: 1px solid var(--line, #e2e8f0);
-  border-radius: 4px;
-}
 /* Two-column PIN layout: main (characteristics + history) + side (map + valuations).
    Left is narrower than the map so the tables fill their column without a big empty gap. */
 .pin-cols {

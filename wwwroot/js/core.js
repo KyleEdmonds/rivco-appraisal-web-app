@@ -30,12 +30,17 @@ export function computeCost(data) {
   };
 }
 
+// The cost approach is "used" only when the appraiser actually opts in or
+// enters cost data — NOT merely because the property has building area (that
+// made the cost sheet + weight row appear on nearly every report). Mirrors the
+// hasIncomeData pattern of requiring a real input.
 export function hasCostData(data) {
   return !!(
-    (data.improvements?.primary?.grossFloorArea ?? 0) > 0 ||
+    (data.cost?.includeInReport ?? false) ||
     (data.cost?.physicalDepreciationPct ?? 0) > 0 ||
     (data.cost?.functionalDepreciation ?? 0) > 0 ||
-    (data.cost?.economicDepreciation ?? 0) > 0
+    (data.cost?.economicDepreciation ?? 0) > 0 ||
+    (data.reconciliation?.costWeight ?? 0) > 0
   );
 }
 
@@ -317,7 +322,8 @@ export function createEmptyParcel(apn) {
       transferDocumentNumber: '', ratioCode: '', salePrice: 0,
       appraiserId: '', section: '', appraiserNotes: '',
       caseType: 'transfer',
-      subjectImage: null, // { source: "gis" } or { source: "upload", file: "..." }
+      subjectImage: null, // legacy single ref (kept for migration); superseded by subjectPhotos
+      subjectPhotos: [], // list of { source: "gis" } or { source: "upload", file: "..." }
     },
     land: {
       siteAreaSqFt: 0, acres: 0, zoning: '', topography: '', shape: '',
@@ -397,7 +403,30 @@ export function normalizeParcel(parcel) {
 }
 
 // --- subject image resolution -------------------------------------------------
-// Resolves the subjectImage reference to a displayable URL.
+// Resolves a single photo reference to a displayable URL.
+//   { source: "gis" }              → /api/parcel-image/{apn}
+//   { source: "upload", file }     → /api/parcel-photos/{apn}/{file}
+//   null / undefined               → null (no image)
+export function resolvePhotoUrl(data, photo) {
+  const p = data?.property;
+  if (!p || !photo) return null;
+  if (photo.source === 'gis' && p.apn) return `/api/parcel-image/${encodeURIComponent(p.apn)}`;
+  if (photo.source === 'upload' && p.apn && photo.file)
+    return `/api/parcel-photos/${encodeURIComponent(p.apn)}/${encodeURIComponent(photo.file)}`;
+  return null;
+}
+
+// Resolves the subject photo list (property.subjectPhotos) to displayable URLs.
+// Returns [] when there are no photos.
+export function resolveSubjectImageUrls(data) {
+  const p = data?.property;
+  if (!p) return [];
+  const photos = Array.isArray(p.subjectPhotos) ? p.subjectPhotos : [];
+  return photos.map((ph) => resolvePhotoUrl(data, ph)).filter(Boolean);
+}
+
+// Resolves the legacy single subjectImage reference to a displayable URL.
+// Kept for the cover's satellite fallback and the map sheet.
 //   { source: "gis" }              → /api/parcel-image/{apn}
 //   { source: "upload", file }     → /api/parcel-photos/{apn}/{file}
 //   legacy base64 data URL         → returned as-is (migration path)
@@ -405,30 +434,56 @@ export function normalizeParcel(parcel) {
 export function resolveSubjectImageUrl(data) {
   const p = data?.property;
   if (!p) return null;
-  // New reference model
-  if (p.subjectImage) {
-    if (p.subjectImage.source === 'gis' && p.apn) return `/api/parcel-image/${encodeURIComponent(p.apn)}`;
-    if (p.subjectImage.source === 'upload' && p.apn && p.subjectImage.file)
-      return `/api/parcel-photos/${encodeURIComponent(p.apn)}/${encodeURIComponent(p.subjectImage.file)}`;
-    return null;
-  }
-  // Legacy: base64 data URL stored directly
+  if (p.subjectImage) return resolvePhotoUrl(data, p.subjectImage);
   if (p.subjectPhotoUrl) return p.subjectPhotoUrl;
   return null;
 }
 
-// Migrate legacy data: strip base64 subjectPhotoUrl, set subjectImage reference.
-// Called on load so old saved appraisals work with the new model.
+// Resolves the effective cover/subject photo URL, honoring an explicit
+// "none" choice. When subjectImage is { source: "none" } the user has
+// deliberately removed the photo, so we return null (no GIS fallback).
+// Otherwise the GIS parcel map is the default when no image is set.
+export function resolveCoverPhotoUrl(data) {
+  const p = data?.property;
+  if (!p) return null;
+  if (p.subjectImage && p.subjectImage.source === 'none') return null;
+  return resolveSubjectImageUrl(data) || (p.apn ? `/api/parcel-image/${encodeURIComponent(p.apn)}` : null);
+}
+
+// --- comp image resolution ----------------------------------------------------
+// Comps carry their own photos (comp.photos), keyed by the comp's own APN so a
+// comp's satellite/uploaded photos are independent of the subject's.
+export function resolveCompPhotoUrl(comp, photo) {
+  const apn = String(comp?.parcel || '').trim();
+  if (!apn || !photo) return null;
+  if (photo.source === 'gis') return `/api/parcel-image/${encodeURIComponent(apn)}`;
+  if (photo.source === 'upload' && photo.file)
+    return `/api/parcel-photos/${encodeURIComponent(apn)}/${encodeURIComponent(photo.file)}`;
+  return null;
+}
+
+// Resolves a comp's photo list (comp.photos) to displayable URLs.
+export function resolveCompPhotoUrls(comp) {
+  const photos = Array.isArray(comp?.photos) ? comp.photos : [];
+  return photos.map((ph) => resolveCompPhotoUrl(comp, ph)).filter(Boolean);
+}
+
+// Migrate legacy data: strip base64 subjectPhotoUrl, seed the multi-photo list.
+// Called on load so old saved appraisals work with the new model. The GIS
+// satellite is always available (shown on the cover), so only explicit uploads
+// are carried into subjectPhotos.
 export function migrateSubjectImage(data) {
   const p = data?.property;
   if (!p) return;
-  // If already migrated, skip
-  if (p.subjectImage) { delete p.subjectPhotoUrl; delete p.mapImageUrl; return; }
-  // Legacy base64 → discard and default to GIS map (the satellite is always available)
-  if (p.subjectPhotoUrl) {
-    p.subjectImage = { source: 'gis' };
-    delete p.subjectPhotoUrl;
+  if (!Array.isArray(p.subjectPhotos)) p.subjectPhotos = [];
+  // Carry over a legacy single uploaded photo into the list (deduped).
+  if (p.subjectImage && p.subjectImage.source === 'upload' && p.subjectImage.file) {
+    const f = p.subjectImage.file;
+    if (!p.subjectPhotos.some((ph) => ph && ph.source === 'upload' && ph.file === f)) {
+      p.subjectPhotos.push({ source: 'upload', file: f });
+    }
   }
+  delete p.subjectPhotoUrl;
   delete p.mapImageUrl;
 }
 

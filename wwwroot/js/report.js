@@ -4,7 +4,8 @@
 import {
   state, computeAppraisal, hasCostData, hasIncomeData,
   fmtCurrency, fmtCurrencyRounded, fmtNumber, fmtPct, fmtAcresNum, titleCase, normalizeCity, fmtDate, todayISO,
-  generateReconciliationNarrative, resolveSubjectImageUrl,
+  generateReconciliationNarrative, resolveSubjectImageUrl, resolveSubjectImageUrls,
+  resolveCoverPhotoUrl, resolveCompPhotoUrls,
 } from './core.js';
 
 function el(tag, attrs = {}, ...children) {
@@ -102,6 +103,31 @@ const ADJ_FIELDS = [
 
 // --- sheets ------------------------------------------------------------------
 
+// --- unified section boxes (shared by the cover and the body sheets) ---------
+// A navy-header box over a label/value grid. The cover and the subject sheet
+// both build from these so they read as one consistent design language.
+function covField(label, value, big = false) {
+  return el('div', { class: 'cov-field' },
+    el('div', { class: 'cov-k' }, label),
+    el('div', { class: big ? 'cov-v cov-v-lg' : 'cov-v' }, value || '—'),
+  );
+}
+function covBox(title, body) {
+  return el('div', { class: 'cov-box' },
+    el('header', {}, title),
+    el('div', { class: 'cov-body' }, body),
+  );
+}
+function covGrid(fields) {
+  return el('div', { class: 'cov-grid' }, ...fields);
+}
+
+// Vacant land has no building, so building-related fields (building area,
+// year built, quality, condition) are omitted from the report.
+function isVacantLand(type) {
+  return /vacant/i.test(String(type || ''));
+}
+
 // --- cover sheets (case-specific, mirror the county PDF covers) --------------
 
 function coverSheet(d, total) {
@@ -112,60 +138,39 @@ function coverSheet(d, total) {
   return transferCover(d, total);
 }
 
-// Transfer cover: Transfer Details row, Property Identification grid,
-// parcel satellite image, value cards, and a full-width notes block.
+// Transfer cover: unified section boxes (Transfer Details, Appraiser Notes,
+// Property Identification, Valuation) + a full-width parcel photo.
 // The navy masthead (kept via sheet()) stays on top.
 function transferCover(d, total) {
   const p = d.property;
   const imp = d.improvements.primary;
   const land = d.land;
 
-  const field = (label, value) => el('div', { class: 'cv-field' },
-    el('div', { class: 'cv-k' }, label),
-    el('div', { class: 'cv-v' }, value || '—'),
-  );
-  const card = (label, value) => el('div', { class: 'cv-card' },
-    el('div', { class: 'cv-card-k' }, label),
-    el('div', { class: 'cv-card-v' }, value || '—'),
-  );
-  const sec = (label) => el('div', { class: 'cv-sec' }, label);
+  // Shared building blocks (see covField/covBox/covGrid above).
+  const field = covField;
+  const box = covBox;
+  const grid = covGrid;
 
-  // Transfer Details — a single row of details.
-  const transferDetails = el('div', {},
-    sec('Transfer Details'),
-    el('div', { class: 'cv-row' },
-      field('Date of Transfer', fmtDate(p.effectiveDate)),
-      field('Document Number', p.transferDocumentNumber),
-      field('Ratio Code', p.ratioCode),
-    ),
-  );
+  // Transfer Details.
+  const transferDetails = box('Transfer Details', grid([
+    field('Date of Transfer', fmtDate(p.effectiveDate)),
+    field('Document Number', p.transferDocumentNumber),
+    field('Ratio Code', p.ratioCode),
+  ]));
 
   // Property Identification — no quality / condition / zoning on the cover.
-  // Row 1: APN / Address / City. Row 2: the rest of the identification fields.
-  const propertyId = el('div', {},
-    sec('Property Identification'),
-    el('div', { class: 'cv-row' },
-      field('APN', p.apn),
-      field('Address', titleCase(p.address)),
-      field('City', normalizeCity(p.city)),
-    ),
-    el('div', { class: 'cv-row' },
-      field('Property Type', imp.type),
-      field('Year Built', imp.yearBuilt ? String(imp.yearBuilt) : ''),
-      field('Gross Floor Area', imp.grossFloorArea > 0 ? `${fmtNumber(imp.grossFloorArea)} SF` : ''),
-      field('Site Area', land.acres > 0 ? `${land.acres.toFixed(2)} ac` : (land.siteAreaSqFt > 0 ? `${fmtNumber(land.siteAreaSqFt)} SF` : '')),
-    ),
-  );
-
-  // Parcel satellite image — the GIS parcel map is the default when no
-  // image has been explicitly selected.
-  const subjUrl = resolveSubjectImageUrl(d) || (p.apn ? `/api/parcel-image/${encodeURIComponent(p.apn)}` : null);
-  const photo = el('div', { class: `cv-photo${subjUrl ? '' : ' cv-photo-empty'}` },
-    el('div', { class: 'cv-photo-cap' }, 'Parcel Satellite Image'),
-    subjUrl
-      ? el('img', { src: subjUrl, alt: 'Parcel satellite image' })
-      : el('div', { class: 'cv-photo-ph' }, 'No image'),
-  );
+  // Building-related fields are omitted for vacant land.
+  const vacant = isVacantLand(imp.type);
+  const propertyId = box('Property Identification', grid([
+    field('APN', p.apn),
+    field('Address', titleCase(p.address)),
+    field('City', normalizeCity(p.city)),
+    field('Property Type', imp.type),
+    !vacant ? field('Year Built', imp.yearBuilt ? String(imp.yearBuilt) : '') : null,
+    !vacant && imp.yearBuilt ? field('Effective Age', p.effectiveDate ? String(parseInt(String(p.effectiveDate).slice(0, 4), 10) - imp.yearBuilt) : '') : null,
+    !vacant ? field('Building Area', imp.grossFloorArea > 0 ? `${fmtNumber(imp.grossFloorArea)} SF` : '') : null,
+    field('Site Area', land.acres > 0 ? `${land.acres.toFixed(2)} ac` : (land.siteAreaSqFt > 0 ? `${fmtNumber(land.siteAreaSqFt)} SF` : '')),
+  ].filter(Boolean)));
 
   // Per-unit value: $/SF when there's building area, $/Acre for vacant land.
   // Only populated when the amount is present. `unit` is the label suffix
@@ -174,113 +179,117 @@ function transferCover(d, total) {
   const acres = land.acres || 0;
   const perUnit = (baseLabel, amount, unit = '/ SF') => {
     const acreUnit = unit.replace(/SF$/, 'Acre');
-    if (!(amount > 0)) return { label: `${baseLabel} ${unit}`, value: '' };
+    if (!(amount > 0)) return null;
     if (gfa > 0) {
       return { label: `${baseLabel} ${unit}`, value: `$${(amount / gfa).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` };
     }
     if (acres > 0) {
       return { label: `${baseLabel} ${acreUnit}`, value: `$${Math.round(amount / acres).toLocaleString('en-US')}` };
     }
-    return { label: `${baseLabel} ${unit}`, value: '' };
+    return null;
   };
   const salePerUnit = perUnit('Sale Price', p.salePrice);
-  const postedPerUnit = perUnit('Enrolled', d.cover.totalPosted, '$/SF');
+  const postedPerUnit = perUnit('Enrolled Value', d.cover.totalPosted);
 
-  // Value cards.
-  const cards = el('div', { class: 'cv-cards' },
-    card('Sale Price', fmtCurrency(p.salePrice)),
-    card(salePerUnit.label, salePerUnit.value),
-    card('Enrolled Value', fmtCurrency(d.cover.totalPosted)),
-    card(postedPerUnit.label, postedPerUnit.value),
-    card('Appraiser ID', p.appraiserId),
-    card('Section', p.section),
+  // Valuation — headline money figures (emphasized) on the first row, with
+  // Appraiser ID / Section / Notes on a second row. Both rows share a fixed
+  // 4-column grid so the columns line up vertically: Appraiser ID under Sale
+  // Price, Section under Sale Price/SF, and Notes spanning the Enrolled Value +
+  // Enrolled Value/SF columns. Per-unit cells are reserved (empty when there's
+  // no building area) so alignment always holds.
+  const notesField = field('Notes', p.appraiserNotes);
+  notesField.classList.add('cov-field-span2');
+  const valuation = box('Valuation',
+    el('div', { class: 'cov-val' },
+      el('div', { class: 'cov-grid cov-grid-4' },
+        field('Sale Price', fmtCurrency(p.salePrice), true),
+        salePerUnit ? field(salePerUnit.label, salePerUnit.value, true) : field('', ''),
+        field('Enrolled Value', fmtCurrency(d.cover.totalPosted), true),
+        postedPerUnit ? field(postedPerUnit.label, postedPerUnit.value, true) : field('', ''),
+      ),
+      el('div', { class: 'cov-grid cov-grid-4' },
+        field('Appraiser ID', p.appraiserId),
+        field('Section', p.section),
+        notesField,
+      ),
+    ),
   );
 
-  // Notes.
-  const notes = el('div', { class: 'cv-notes' },
-    sec('Appraiser Notes'),
-    el('div', { class: 'cv-notes-body' }, p.appraiserNotes || '—'),
+  // Parcel satellite image — the GIS parcel map is the default when no
+  // image has been explicitly selected (an explicit "none" removes it).
+  const subjUrl = resolveCoverPhotoUrl(d);
+  const photo = el('div', { class: `cov-photo${subjUrl ? '' : ' cov-photo-empty'}` },
+    el('div', { class: 'cov-photo-cap' }, 'Parcel Satellite Image'),
+    subjUrl
+      ? el('img', { src: subjUrl, alt: 'Parcel satellite image' })
+      : el('div', { class: 'cov-photo-ph' }, 'No image'),
   );
 
   return sheet(1, total,
-    el('div', { class: 'cover-inner cv-inner' },
+    el('div', { class: 'cover-inner cov-inner' },
       transferDetails,
-      cards,
       propertyId,
+      valuation,
       photo,
-      notes,
     ),
   );
 }
 
 // General cover: a plain valuation as of a date — property identification,
 // purpose, valuation, appraiser info/notes, and subject photo. No transfer,
-// appeal, or stipulation specifics.
+// appeal, or stipulation specifics. Uses the same unified section boxes as
+// the transfer cover.
 function generalCover(d, total) {
   const p = d.property;
   const comp = computeAppraisal(d);
-  const field = (label, value) => el('div', { class: 'trc2-field' },
-    el('div', { class: 'trc2-k' }, label),
-    el('div', { class: 'trc2-v' }, value || '—'),
-  );
-  const box = (title, body) => el('div', { class: 'trc2-box' },
-    el('header', {}, title),
-    el('div', { class: 'trc2-body' }, body),
-  );
+  const field = covField;
+  const box = covBox;
+  const grid = covGrid;
 
-  const propertyId = box('Property Identification',
-    el('div', { class: 'trc2-fields' },
-      field('APN', p.apn),
-      field('Situs', titleCase(p.address)),
-      field('City', normalizeCity(p.city)),
-      field('Property Type', d.improvements.primary.type),
-    ),
-  );
+  const propertyId = box('Property Identification', grid([
+    field('APN', p.apn),
+    field('Situs', titleCase(p.address)),
+    field('City', normalizeCity(p.city)),
+    field('Property Type', d.improvements.primary.type),
+  ]));
 
-  const purpose = box('Purpose',
-    el('div', { class: 'trc2-fields' },
-      field('Reason', p.purpose),
-      field('Report Type', p.reportType),
-      field('Client', p.client),
-    ),
-  );
+  const purpose = box('Purpose', grid([
+    field('Reason', p.purpose),
+    field('Report Type', p.reportType),
+    field('Client', p.client),
+  ]));
 
   const finalValue = d.reconciliation.finalValue || comp.reconciliation.weightedValue;
-  const valuation = box('Valuation Details',
-    el('div', { class: 'trc2-fields trc2-cols2' },
-      field('Effective Date', fmtDate(p.effectiveDate)),
-      field('Final Value', finalValue > 0 ? fmtCurrency(finalValue) : '—'),
-    ),
-  );
+  const valuation = box('Valuation Details', grid([
+    field('Effective Date', fmtDate(p.effectiveDate)),
+    field('Final Value', finalValue > 0 ? fmtCurrency(finalValue) : '', true),
+  ]));
 
-  const appraiserInfo = box('Appraiser Info',
-    el('div', { class: 'trc2-fields' },
-      field('Prepared By', p.appraiser),
-      field('Appraiser ID', p.appraiserId),
-    ),
-  );
+  const appraiserInfo = box('Appraiser Info', grid([
+    field('Prepared By', p.appraiser),
+    field('Appraiser ID', p.appraiserId),
+  ]));
 
   const appraiserNotes = box('Appraiser Notes',
-    el('div', { class: 'trc2-notes' }, p.appraiserNotes || '—'),
+    el('div', { class: 'cov-notes' }, p.appraiserNotes || '—'),
   );
 
   // The GIS parcel map is the default when no image has been selected.
-  const subjUrl = resolveSubjectImageUrl(d) || (p.apn ? `/api/parcel-image/${encodeURIComponent(p.apn)}` : null);
-  const subjectPhoto = el('div', { class: `trc2-photo${subjUrl ? '' : ' trc2-photo-empty'}` },
+  const subjUrl = resolveCoverPhotoUrl(d);
+  const subjectPhoto = el('div', { class: `cov-photo${subjUrl ? '' : ' cov-photo-empty'}` },
+    el('div', { class: 'cov-photo-cap' }, 'Parcel Satellite Image'),
     subjUrl
       ? el('img', { src: subjUrl, alt: 'Parcel satellite image' })
-      : el('div', { class: 'trc2-photo-ph' }, 'No image'),
+      : el('div', { class: 'cov-photo-ph' }, 'No image'),
   );
 
   return sheet(1, total,
-    el('div', { class: 'cover-inner trc2-inner' },
-      el('div', { class: 'trc2-left' },
-        propertyId,
-        purpose,
-        valuation,
-        appraiserInfo,
-        appraiserNotes,
-      ),
+    el('div', { class: 'cover-inner cov-inner' },
+      propertyId,
+      purpose,
+      valuation,
+      appraiserInfo,
+      appraiserNotes,
       subjectPhoto,
     ),
   );
@@ -636,69 +645,57 @@ function reconciliationSheet(d, comp) {
 
 // --- render ------------------------------------------------------------------
 
-// Transfer Details appear on the report only when at least one
-// transfer-specific field was populated on the form.
-function hasTransferData(d) {
-  const p = d.property;
-  return !!(
-    (p.transferDocumentNumber || '').trim() ||
-    (p.ratioCode || '').trim() ||
-    (p.salePrice ?? 0) > 0 ||
-    (p.appraiserId || '').trim() ||
-    (p.section || '').trim() ||
-    (p.appraiserNotes || '').trim()
-  );
-}
-
+// Subject property sheet — restyled to the unified section boxes used on the
+// cover (navy header bar over a label/value grid). Property identification and
+// description are merged into one box; the subject photos box grows to fill the
+// leftover vertical space so the sheet always fits one page.
 function subjectPropertySheet(d) {
   const p = d.property;
   const l = d.land;
   const b = d.improvements.primary;
   const gfa = b.grossFloorArea || 0;
-  const psf = gfa > 0 && p.salePrice > 0 ? p.salePrice / gfa : 0;
+  const address = [titleCase(p.address), p.zip].filter(Boolean).join(', ');
+
+  // Subject Property — identification + description in one box.
+  // Fixed 4-column grid so the 12 fields lay out as 3 rows of 4.
+  // Building-related fields are omitted for vacant land.
+  const vacant = isVacantLand(b.type);
+  const subject = covBox('Subject Property', el('div', { class: 'cov-grid cov-grid-4' }, [
+    covField('APN', p.apn),
+    covField('Address', address),
+    covField('City', normalizeCity(p.city)),
+    covField('Property Type', b.type),
+    !vacant ? covField('Building Area', gfa > 0 ? `${fmtNumber(gfa)} SF` : '') : null,
+    covField('Site Area', l.siteAreaSqFt > 0 ? `${fmtNumber(l.siteAreaSqFt)} SF` : ''),
+    covField('Acres', l.acres > 0 ? fmtAcresNum(l.acres) : ''),
+    !vacant ? covField('Quality', b.quality) : null,
+    !vacant ? covField('Year Built', b.yearBuilt) : null,
+    !vacant && b.yearBuilt ? covField('Effective Age', p.effectiveDate ? String(parseInt(String(p.effectiveDate).slice(0, 4), 10) - b.yearBuilt) : '') : null,
+    !vacant ? covField('Condition', b.condition) : null,
+    covField('Zoning', l.zoning),
+  ].filter(Boolean)));
+
+  // Subject Photos — the single cover photo (GIS map by default); grows to fill
+  // the page (like the cover).
+  const subjUrl = resolveCoverPhotoUrl(d);
+  const photos = subjUrl ? [subjUrl] : [];
+  const photosBox = covBox('Subject Photos',
+    photos.length > 0
+      ? el('div', { class: `cov-photos${photos.length === 1 ? ' single' : ''}` },
+          ...photos.map((url, i) => el('div', { class: 'cov-photo-cell' }, el('img', { src: url, alt: `Subject photo ${i + 1}` }))))
+      : el('div', { class: 'cov-photos-empty' }, 'No photos'),
+  );
+
   return [
-    heading('Subject Property'),
-    table(
-      ['Parcel', 'Eff. Date', 'Sale Price', 'Sq Ft', '$/Sq Ft', 'Location'],
-      [[
-        p.apn || '—',
-        fmtDate(p.effectiveDate),
-        fmtCurrency(p.salePrice),
-        gfa > 0 ? fmtNumber(gfa) : '—',
-        psf > 0 ? fmtCurrency(psf) : '—',
-        [titleCase(p.address), normalizeCity(p.city)].filter(Boolean).join(', ') || '—',
-      ]],
+    el('div', { class: 'cov-stack' },
+      subject,
+      photosBox,
     ),
-    heading('Property Description'),
-    kv([
-      ['Address', [titleCase(p.address), normalizeCity(p.city), p.zip].filter(Boolean).join(', ')],
-      ['APN', p.apn],
-      ['Site Area', l.siteAreaSqFt > 0 ? `${fmtNumber(l.siteAreaSqFt)} SF` : ''],
-      ['Acres', l.acres > 0 ? fmtAcresNum(l.acres) : ''],
-      ['Zoning', l.zoning],
-      ['Building Area', gfa > 0 ? `${fmtNumber(gfa)} SF` : ''],
-      ['Year Built', b.yearBuilt],
-      ['Quality', b.quality],
-      ['Condition', b.condition],
-    ]),
-    ...(hasTransferData(d) ? [
-      heading((d.property.caseType === 'appeal' || d.property.caseType === 'stipulation') ? 'Appeal Details' : 'Transfer Details'),
-      kv([
-        ['Transfer Document #', p.transferDocumentNumber],
-        ['Ratio Code', p.ratioCode],
-        ['Sale Price', p.salePrice > 0 ? fmtCurrency(p.salePrice) : ''],
-        ['Appraiser ID', p.appraiserId],
-        ['Section', p.section],
-        ['Appraiser Notes', p.appraiserNotes],
-      ]),
-    ] : []),
-    heading('Subject Parcel Map'),
-    resolveSubjectImageUrl(d)
-      ? el('div', { class: 'img-cell' }, el('img', { src: resolveSubjectImageUrl(d), alt: 'Subject parcel map' }))
-      : el('div', { class: 'img-cell empty' }, el('div', { class: 'img-cap' }, 'No map')),
   ];
 }
 
+// One page per selected comp, in the same unified navy-box style as the cover
+// and subject sheet. The photos box grows to fill the leftover vertical space.
 function compDetailSheets(d) {
   const comps = (d.sales.comparables || []).filter((c) => c.selected !== false);
   if (comps.length === 0) return [];
@@ -709,30 +706,47 @@ function compDetailSheets(d) {
     const adjRows = ADJ_KEYS
       .map((f) => [f.replace('adj', '').replace(/([A-Z])/g, ' $1').trim().toLowerCase().replace(/\b\w/g, (m) => m.toUpperCase()), Number(c[f]) || 0])
       .filter(([, v]) => v !== 0);
-    return [
-      heading(`Comparable #${i + 1}`),
-      kv([
-        ['Parcel', c.parcel],
-        ['Address', [titleCase(c.address), normalizeCity(c.city)].filter(Boolean).join(', ')],
-        ['Sale Date', fmtDate(c.saleDate)],
-        ['Sale Price', fmtCurrency(c.price)],
-        ['Age', c.age],
-        ['Quality', c.quality],
-        ['Condition', c.condition],
-        ['Land Area (Acres)', c.landArea > 0 ? fmtAcresNum(c.landArea) : ''],
-        ['Building Area (SF)', c.buildingArea > 0 ? fmtNumber(c.buildingArea) : ''],
-        ['Land to Bldg. Ratio', c.landArea > 0 && c.buildingArea > 0 ? (c.buildingArea / c.landArea).toFixed(2) : ''],
-      ]),
-      heading('Adjustments'),
+
+    const idBox = covBox(`Comparable #${i + 1}`, covGrid([
+      covField('Parcel', c.parcel),
+      covField('Address', [titleCase(c.address), normalizeCity(c.city)].filter(Boolean).join(', ')),
+      covField('Sale Date', fmtDate(c.saleDate)),
+      covField('Sale Price', c.price > 0 ? fmtCurrency(c.price) : '', true),
+      covField('Age', c.age),
+      covField('Quality', c.quality),
+      covField('Condition', c.condition),
+      covField('Land Area', c.landArea > 0 ? fmtAcresNum(c.landArea) : ''),
+      covField('Building Area', c.buildingArea > 0 ? `${fmtNumber(c.buildingArea)} SF` : ''),
+      covField('Land to Bldg. Ratio', c.landArea > 0 && c.buildingArea > 0 ? (c.buildingArea / c.landArea).toFixed(2) : ''),
+    ]));
+
+    const adjBox = covBox('Adjustments',
       adjRows.length > 0
         ? table(['Adjustment', 'Amount'], [...adjRows, ['Net Adjustment', net]])
-        : kv([['No adjustments', '—']]),
-      heading('Result'),
-      kv([
-        ['Unadjusted $/SF', unadjSF > 0 ? fmtCurrency(unadjSF) : '—'],
-        ['Net Adjustment', `${net > 0 ? '+' : ''}${net}%`],
-        ['Adjusted $/SF', adjSF > 0 ? fmtCurrency(adjSF) : '—'],
-      ]),
+        : el('div', { class: 'cov-notes' }, 'No adjustments'),
+    );
+
+    const resultBox = covBox('Result', covGrid([
+      covField('Unadjusted $/SF', unadjSF > 0 ? fmtCurrency(unadjSF) : ''),
+      covField('Net Adjustment', `${net > 0 ? '+' : ''}${net}%`),
+      covField('Adjusted $/SF', adjSF > 0 ? fmtCurrency(adjSF) : '', true),
+    ]));
+
+    const photos = resolveCompPhotoUrls(c);
+    const photosBox = covBox('Photos',
+      photos.length > 0
+        ? el('div', { class: `cov-photos${photos.length === 1 ? ' single' : ''}` },
+            ...photos.map((url, j) => el('div', { class: 'cov-photo-cell' }, el('img', { src: url, alt: `Comp ${i + 1} photo ${j + 1}` }))))
+        : el('div', { class: 'cov-photos-empty' }, 'No photos'),
+    );
+
+    return [
+      el('div', { class: 'cov-stack' },
+        idBox,
+        adjBox,
+        resultBox,
+        photosBox,
+      ),
     ];
   });
 }

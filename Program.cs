@@ -424,8 +424,8 @@ app.MapGet("/api/parcel-data/{apn}", (string apn) =>
         : Results.Ok(node);
 });
 
-// Parcel search for the top-bar search box: APN prefix (3+ digits) or
-// case-insensitive address substring. Returns up to 20 lightweight matches
+// Parcel search for the top-bar search box: APN prefix (any all-digit query)
+// or case-insensitive address substring. Returns up to 20 lightweight matches
 // so the UI can suggest PINs that have no appraisal yet.
 app.MapGet("/api/parcel-search", (string? q) =>
 {
@@ -433,7 +433,9 @@ app.MapGet("/api/parcel-search", (string? q) =>
     var query = (q ?? "").Trim();
     if (query.Length == 0) return Results.Ok(new List<Dictionary<string, object?>>());
     var lq = query.ToLowerInvariant();
-    var isApn = query.Length >= 3 && query.All(char.IsDigit);
+    // Any all-digit query is an APN prefix (e.g. typing "2" surfaces every PIN
+    // that starts with 2). Only non-digit queries fall back to address search.
+    var isApn = query.All(char.IsDigit);
     var results = new List<Dictionary<string, object?>>();
     foreach (var (apn, node) in data)
     {

@@ -6,7 +6,7 @@ import {
   state, markDirty, computeAppraisal, hasCostData, hasIncomeData,
   fmtCurrency, fmtCurrencyRounded, fmtNumber, fmtPct, fmtDate, normalizeCity, titleCase, api,
   getLocalComps, clearLocalComps, importLocalComps, scheduleAutosave,
-  resolveSubjectImageUrl, rankCompsBySimilarity,
+  resolveSubjectImageUrl, resolveCoverPhotoUrl, resolvePhotoUrl, resolveCompPhotoUrl, rankCompsBySimilarity,
 } from './core.js';
 import { renderReport, scrollToSection } from './report.js';
 
@@ -57,6 +57,12 @@ function el(tag, attrs = {}, ...children) {
     node.append(c.nodeType ? c : document.createTextNode(String(c)));
   }
   return node;
+}
+
+function toast(msg, isError = false) {
+  const t = el('div', { class: `toast ${isError ? 'error' : ''}` }, msg);
+  document.body.append(t);
+  setTimeout(() => t.remove(), 3000);
 }
 
 // --- state path binding ------------------------------------------------------
@@ -116,11 +122,16 @@ function dataValue(path) {
 // Re-render all live computed values in the form, then the report.
 function refreshComputed() {
   document.querySelectorAll('[data-calc]').forEach((n) => {
-    n.textContent = fmtVal(calcValue(n.dataset.calc), n.dataset.fmt || 'cur');
+    const v = fmtVal(calcValue(n.dataset.calc), n.dataset.fmt || 'cur');
+    // <input> fields (e.g. Effective Age) display .value, not textContent.
+    if (n.tagName === 'INPUT') n.value = v;
+    else n.textContent = v;
   });
   document.querySelectorAll('[data-data]').forEach((n) => {
     n.textContent = fmtVal(dataValue(n.dataset.data), n.dataset.fmt || 'raw');
   });
+  updateCoverComplete();
+  updateTabStatus();
   renderReport();
   window.dispatchEvent(new CustomEvent('appraisal:changed'));
 }
@@ -293,82 +304,94 @@ function imgBox(title, path) {
 let activeImageDrop = null;
 let imagePasteBound = false;
 
-function subjectImagePanel() {
+// Single-photo panel for the cover page. Manages property.subjectImage — the
+// one image shown on the cover. Auto-populates with the GIS satellite map; the
+// user can replace it with an uploaded/pasted photo or remove it (back to GIS).
+function coverPhotoPanel() {
   const d = state.data;
   const p = d.property;
   const apn = String(p.apn || '').trim();
+
   const wrap = el('div', { class: 'img-panel' });
-  const preview = el('div', { class: 'img-panel-preview' });
+  const preview = el('div', { class: 'cover-photo-preview' });
   const modeBtns = el('div', { class: 'img-panel-modes' });
 
-  const currentUrl = () => resolveSubjectImageUrl(d);
+  // The cover page shows the explicit subjectImage, falling back to the GIS
+  // parcel map when none is set — so the GIS map is the default ("auto-populated").
+  // An explicit { source: "none" } means the user removed the photo (no GIS fallback).
+  const currentUrl = () => resolveCoverPhotoUrl(d);
+  const isCustom = () => !!(p.subjectImage && p.subjectImage.source === 'upload');
+  const isNone = () => !!(p.subjectImage && p.subjectImage.source === 'none');
 
-  const renderPreview = () => {
+  const reRender = () => {
     preview.replaceChildren();
     const url = currentUrl();
-    if (url) {
-      preview.append(el('img', { src: url, alt: 'Subject property' }));
-      const actions = el('div', { class: 'img-panel-actions' });
-      const removeBtn = el('button', { class: 'btn tiny danger' }, 'Remove');
-      removeBtn.onclick = () => { p.subjectImage = null; markDirty(); refreshComputed(); renderPreview(); };
-      actions.append(removeBtn);
-      preview.append(actions);
-    } else {
-      preview.append(el('div', { class: 'img-panel-empty' }, 'No image set'));
-    }
+    const custom = isCustom();
+    const none = isNone();
+    preview.append(
+      url
+        ? el('img', { src: url, alt: 'Cover photo' })
+        : el('div', { class: 'cover-photo-ph' }, 'No image'),
+    );
+    preview.append(el('div', { class: 'cover-photo-label' },
+      none ? 'No image'
+        : custom ? 'Custom photo'
+        : (apn ? 'GIS Map' : 'Set an APN to load the GIS map')));
+    // Toggle button: "Remove" when a photo is showing, "GIS Map" to restore it.
+    removeBtn.textContent = none ? 'GIS Map' : 'Remove';
+    removeBtn.classList.toggle('danger', !none);
+    removeBtn.style.display = (url || none) ? '' : 'none';
   };
 
-  // GIS Map button
-  const gisBtn = el('button', { class: 'btn tiny img-mode-btn' }, '🛰 GIS Map');
-  gisBtn.onclick = () => {
+  const setPhoto = (photo) => {
+    p.subjectImage = photo;
+    markDirty(); refreshComputed(); reRender();
+  };
+
+  const uploadFile = (f) => {
+    if (!f || !f.type || !f.type.startsWith('image/')) return;
     if (!apn) { toast('Set an APN first', true); return; }
-    p.subjectImage = { source: 'gis' };
-    markDirty(); refreshComputed(); renderPreview();
+    const fd = new FormData();
+    fd.append('file', f);
+    fetch(`/api/parcel-photos/${encodeURIComponent(apn)}`, { method: 'POST', body: fd })
+      .then(r => r.json())
+      .then(res => { if (res.saved && res.saved[0]) setPhoto({ source: 'upload', file: res.saved[0] }); })
+      .catch(() => toast('Upload failed', true));
   };
 
-  // Upload / Paste button + drop zone
+  // Google Images button — opens a Google image search for the address + city.
+  const searchBtn = el('button', { class: 'btn tiny img-mode-btn', title: 'Search Google Images for this address' }, '🔍 Google Images');
+  searchBtn.onclick = () => {
+    const q = [titleCase(p.address), normalizeCity(p.city)].map((v) => (v ?? '').trim()).filter(Boolean).join(' ');
+    if (!q) { toast('Enter an address first', true); return; }
+    window.open(`https://www.google.com/search?tbm=isch&q=${encodeURIComponent(q)}`, '_blank', 'noopener');
+  };
+
+  // Upload / Paste button + hidden file input.
   const fileInput = el('input', { type: 'file', accept: 'image/*' });
   fileInput.style.display = 'none';
   const uploadBtn = el('button', { class: 'btn tiny img-mode-btn' }, '📷 Upload / Paste');
   uploadBtn.onclick = () => fileInput.click();
   fileInput.onchange = () => {
-    const f = fileInput.files[0];
-    if (!f || !f.type || !f.type.startsWith('image/')) return;
-    if (!apn) { toast('Set an APN first', true); return; }
-    const fd = new FormData();
-    fd.append('file', f);
-    fetch(`/api/parcel-photos/${encodeURIComponent(apn)}`, { method: 'POST', body: fd })
-      .then(r => r.json())
-      .then(res => {
-        if (res.saved && res.saved[0]) {
-          p.subjectImage = { source: 'upload', file: res.saved[0] };
-          markDirty(); refreshComputed(); renderPreview();
-        }
-      }).catch(() => toast('Upload failed', true));
+    if (fileInput.files[0]) uploadFile(fileInput.files[0]);
     fileInput.value = '';
   };
 
-  // Drag & drop onto the preview area
-  preview.ondragover = (e) => { e.preventDefault(); preview.classList.add('drag'); };
-  preview.ondragleave = () => preview.classList.remove('drag');
-  preview.ondrop = (e) => {
-    e.preventDefault(); preview.classList.remove('drag');
-    const f = e.dataTransfer.files[0];
-    if (!f || !f.type || !f.type.startsWith('image/')) return;
-    if (!apn) { toast('Set an APN first', true); return; }
-    const fd = new FormData();
-    fd.append('file', f);
-    fetch(`/api/parcel-photos/${encodeURIComponent(apn)}`, { method: 'POST', body: fd })
-      .then(r => r.json())
-      .then(res => {
-        if (res.saved && res.saved[0]) {
-          p.subjectImage = { source: 'upload', file: res.saved[0] };
-          markDirty(); refreshComputed(); renderPreview();
-        }
-      }).catch(() => toast('Upload failed', true));
+  // Remove / restore button — toggles between "no photo" and the GIS map.
+  // Shows "Remove" when a photo is present; "GIS Map" when none is set.
+  const removeBtn = el('button', { class: 'btn tiny danger img-mode-btn' }, 'Remove');
+  removeBtn.onclick = () => setPhoto(isNone() ? { source: 'gis' } : { source: 'none' });
+
+  // Drag & drop onto the panel.
+  wrap.ondragover = (e) => { e.preventDefault(); wrap.classList.add('drag'); };
+  wrap.ondragleave = () => wrap.classList.remove('drag');
+  wrap.ondrop = (e) => {
+    e.preventDefault(); wrap.classList.remove('drag');
+    for (const f of e.dataTransfer.files) uploadFile(f);
   };
 
-  // Paste handler
+  // Paste handler (module-level, bound once). Reads the current APN at paste
+  // time so it stays correct across re-renders.
   if (!imagePasteBound) {
     imagePasteBound = true;
     document.addEventListener('paste', (e) => {
@@ -379,17 +402,21 @@ function subjectImagePanel() {
       for (const it of items) {
         if (it.type && it.type.startsWith('image/')) {
           const f = it.getAsFile();
-          if (f && apn) {
+          const curApn = String(state.data.property.apn || '').trim();
+          if (f && curApn) {
             const fd = new FormData();
             fd.append('file', f);
-            fetch(`/api/parcel-photos/${encodeURIComponent(apn)}`, { method: 'POST', body: fd })
+            fetch(`/api/parcel-photos/${encodeURIComponent(curApn)}`, { method: 'POST', body: fd })
               .then(r => r.json())
               .then(res => {
                 if (res.saved && res.saved[0]) {
-                  p.subjectImage = { source: 'upload', file: res.saved[0] };
-                  markDirty(); refreshComputed(); renderPreview();
+                  state.data.property.subjectImage = { source: 'upload', file: res.saved[0] };
+                  markDirty();
+                  renderForm();
+                  refreshComputed();
                 }
-              }).catch(() => toast('Upload failed', true));
+              })
+              .catch(() => toast('Upload failed', true));
             e.preventDefault();
             break;
           }
@@ -398,13 +425,13 @@ function subjectImagePanel() {
     });
   }
 
-  modeBtns.append(gisBtn, uploadBtn);
+  modeBtns.append(searchBtn, uploadBtn, removeBtn);
   wrap.append(
-    el('div', { class: 'img-panel-head' }, el('span', { class: 'img-panel-title' }, 'Subject Property Image'), modeBtns),
+    el('div', { class: 'img-panel-head' }, el('span', { class: 'img-panel-title' }, 'Cover Photo'), modeBtns),
     preview,
     fileInput,
   );
-  renderPreview();
+  reRender();
   return wrap;
 }
 
@@ -448,7 +475,7 @@ function subjectTab() {
       dgCell('Building Area (SF)', denseNum('improvements.primary.grossFloorArea')),
       dgCell('Leasable Area (SF)', denseNum('improvements.primary.nla')),
       dgCell('Year Built', denseNum('improvements.primary.yearBuilt')),
-      dgCell('Effective Age', el('input', { class: 'inp', readonly: true, 'data-calc': 'effAge', 'data-fmt': 'num' })),
+      dgCell('Effective Age', el('input', { class: 'inp', readonly: true, 'data-calc': 'effAge', 'data-fmt': 'num', value: fmtVal(calcValue('effAge'), 'num') })),
       dgCell('Quality', denseInput('improvements.primary.quality')),
       dgCell('Condition', denseSelect('improvements.primary.condition', CONDITION_OPTIONS)),
     ]),
@@ -504,6 +531,7 @@ function newComp() {
     adjQuality: 0, adjCondition: 0, adjTenantsUse: 0, adjOccupancy: 0,
     adjLandBldgRatio: 0, adjFreeway: 0, adjMarketConditions: 0, adjConditionOfSale: 0,
     selected: true, isArmsLength: true,
+    photos: [],
   };
 }
 
@@ -676,53 +704,49 @@ function renderRepoResults() {
     return;
   }
 
+  // Seven columns (city is folded under the address; land/age/type live in the
+  // comp form). Fixed widths + a flexible address column keep the table within
+  // the pane width so it never scrolls horizontally.
   const COLS = [
-    ['similarity', 'Sim'],
-    ['apn', 'APN'],
-    ['address', 'Address'],
-    ['city', 'City'],
-    ['saleDate', 'Sale Date'],
-    ['price', 'Price'],
-    ['psf', '$/SF'],
-    ['buildingArea', 'Bldg SF'],
-    ['landArea', 'Land (Ac)'],
-    ['age', 'Age'],
-    ['propertyType', 'Type'],
+    ['similarity', 'Sim', 44],
+    ['apn', 'APN', 92],
+    ['address', 'Address', null],
+    ['saleDate', 'Sale', 74],
+    ['price', 'Price', 84],
+    ['psf', '$/SF', 58],
+    ['buildingArea', 'Bldg SF', 72],
   ];
 
   const header = el('tr', {},
-    ...COLS.map(([key, label]) => {
+    ...COLS.map(([key, label, width]) => {
       const th = el('th', { class: `sortable ${repoSortKey === key ? 'sorted' : ''}`, onclick: () => toggleRepoSort(key) },
         label,
         el('span', { class: 'sort-ind' }, repoSortKey === key ? (repoSortDir === 'asc' ? '▲' : '▼') : '↕'),
       );
-      if (key === 'price' || key === 'psf' || key === 'buildingArea' || key === 'landArea' || key === 'similarity') th.style.textAlign = 'right';
+      if (width) th.style.width = `${width}px`;
+      if (key === 'price' || key === 'psf' || key === 'buildingArea' || key === 'similarity') th.style.textAlign = 'right';
       return th;
     }),
-    el('th', {}, ''),
+    el('th', { style: 'width:64px' }, ''),
   );
 
   // Fixed subject row — quick-glance reference for the subject's characteristics
   // while selecting comps. Always pinned above the comp rows (not filtered/sorted).
   const p = state.data.property;
   const imp = state.data.improvements.primary;
-  const land = state.data.land;
   const hasSubjectData = !!(p.apn || p.address || (imp.grossFloorArea || 0) > 0 || (p.salePrice || 0) > 0);
-  const subjectAge = imp.yearBuilt ? String(new Date().getFullYear() - imp.yearBuilt) : '';
   const subjectPSF = (imp.grossFloorArea || 0) > 0 && (p.salePrice || 0) > 0 ? p.salePrice / imp.grossFloorArea : 0;
-  const subjectAcres = (land.siteAreaSqFt || 0) / 43560;
   const subjectRow = hasSubjectData ? el('tr', { class: 'subject-row' },
     el('td', { class: 'sim' }, '—'),
     el('td', {}, p.apn || '—'),
-    el('td', { class: 'addr', title: titleCase(p.address) || '' }, titleCase(p.address) || '—'),
-    el('td', { class: 'city', title: normalizeCity(p.city) || '' }, normalizeCity(p.city) || '—'),
+    el('td', { class: 'addr' },
+      el('div', { class: 'addr-main', title: titleCase(p.address) || '' }, titleCase(p.address) || '—'),
+      el('div', { class: 'addr-sub' }, normalizeCity(p.city) || ''),
+    ),
     el('td', {}, '—'),
     el('td', { class: 'num' }, (p.salePrice || 0) > 0 ? fmtCurrency(p.salePrice) : '—'),
     el('td', { class: 'num' }, subjectPSF > 0 ? subjectPSF.toFixed(2) : '—'),
     el('td', { class: 'num' }, (imp.grossFloorArea || 0) > 0 ? fmtNumber(imp.grossFloorArea) : '—'),
-    el('td', { class: 'num' }, subjectAcres > 0 ? subjectAcres.toFixed(2) : '—'),
-    el('td', { class: 'num' }, subjectAge || '—'),
-    el('td', { class: 'type', title: imp.type || '' }, imp.type || '—'),
     el('td', {}, el('span', { class: 'subject-badge' }, 'SUBJECT')),
   ) : null;
 
@@ -731,15 +755,14 @@ function renderRepoResults() {
     const tr = el('tr', { class: isSelected ? 'selected' : '' },
       el('td', { class: 'sim' }, r.__sim > 0 ? `${Math.round(r.__sim)}%` : '—'),
       el('td', {}, r.apn || '—'),
-      el('td', { class: 'addr', title: titleCase(r.address) || '' }, titleCase(r.address) || '—'),
-      el('td', { class: 'city', title: normalizeCity(r.city) || '' }, normalizeCity(r.city) || '—'),
+      el('td', { class: 'addr' },
+        el('div', { class: 'addr-main', title: titleCase(r.address) || '' }, titleCase(r.address) || '—'),
+        el('div', { class: 'addr-sub' }, normalizeCity(r.city) || ''),
+      ),
       el('td', {}, r.saleDate ? fmtDate(r.saleDate) : '—'),
       el('td', { class: 'num' }, r.price > 0 ? fmtCurrency(r.price) : '—'),
       el('td', { class: 'num' }, repoPSF(r) > 0 ? repoPSF(r).toFixed(2) : '—'),
       el('td', { class: 'num' }, r.buildingArea > 0 ? fmtNumber(r.buildingArea) : '—'),
-      el('td', { class: 'num' }, r.landArea > 0 ? r.landArea.toFixed(2) : '—'),
-      el('td', { class: 'num' }, r.age > 0 ? String(r.age) : '—'),
-      el('td', { class: 'type', title: r.propertyType || '' }, r.propertyType || '—'),
       el('td', {}, isSelected
         ? el('button', { class: 'btn tiny danger', onclick: () => removeRepoComp(r.apn) }, 'Remove')
         : el('button', { class: 'btn tiny', onclick: () => addRepoComp(r) }, '+ Add')),
@@ -832,6 +855,90 @@ function compSelectField(label, comp, key, options) {
   return wrap;
 }
 
+// Multi-photo panel for a comparable. Manages comp.photos (a list of
+// { source: "gis" } | { source: "upload", file }) keyed by the comp's own APN.
+// Supports the GIS satellite, uploading (multi-select), and drag & drop; each
+// photo can be removed individually. (Paste is handled globally for the subject.)
+function compPhotosPanel(comp) {
+  const apn = String(comp.parcel || '').trim();
+  if (!Array.isArray(comp.photos)) comp.photos = [];
+
+  const wrap = el('div', { class: 'img-panel' });
+  const grid = el('div', { class: 'img-panel-grid' });
+  const modeBtns = el('div', { class: 'img-panel-modes' });
+
+  const reRender = () => {
+    grid.replaceChildren();
+    comp.photos.forEach((ph, i) => {
+      const url = resolveCompPhotoUrl(comp, ph);
+      const cell = el('div', { class: 'img-thumb' });
+      cell.append(url
+        ? el('img', { src: url, alt: `Comp photo ${i + 1}` })
+        : el('div', { class: 'img-thumb-ph' }, ph.source === 'gis' ? 'GIS Map' : 'Photo'));
+      const rm = el('button', { class: 'btn tiny danger img-thumb-rm' }, 'Remove');
+      rm.onclick = () => { comp.photos.splice(i, 1); markDirty(); refreshComputed(); reRender(); };
+      cell.append(rm);
+      grid.append(cell);
+    });
+    const add = el('div', { class: 'img-thumb img-thumb-add' },
+      el('div', { class: 'img-thumb-add-inner' },
+        el('div', { class: 'img-thumb-add-plus' }, '+'),
+        el('div', { class: 'img-thumb-add-label' }, 'Add photo'),
+      ),
+    );
+    add.onclick = () => fileInput.click();
+    grid.append(add);
+  };
+
+  const addPhoto = (photo) => {
+    comp.photos.push(photo);
+    markDirty(); refreshComputed(); reRender();
+  };
+
+  const uploadFile = (f) => {
+    if (!f || !f.type || !f.type.startsWith('image/')) return;
+    if (!apn) { toast('Set a parcel # first', true); return; }
+    const fd = new FormData();
+    fd.append('file', f);
+    fetch(`/api/parcel-photos/${encodeURIComponent(apn)}`, { method: 'POST', body: fd })
+      .then(r => r.json())
+      .then(res => { if (res.saved && res.saved[0]) addPhoto({ source: 'upload', file: res.saved[0] }); })
+      .catch(() => toast('Upload failed', true));
+  };
+
+  const gisBtn = el('button', { class: 'btn tiny img-mode-btn' }, '🛰 GIS Map');
+  gisBtn.onclick = () => {
+    if (!apn) { toast('Set a parcel # first', true); return; }
+    if (comp.photos.some((ph) => ph.source === 'gis')) { toast('GIS map already added', true); return; }
+    addPhoto({ source: 'gis' });
+  };
+
+  const fileInput = el('input', { type: 'file', accept: 'image/*', multiple: true });
+  fileInput.style.display = 'none';
+  const uploadBtn = el('button', { class: 'btn tiny img-mode-btn' }, '📷 Upload / Paste');
+  uploadBtn.onclick = () => fileInput.click();
+  fileInput.onchange = () => {
+    for (const f of fileInput.files) uploadFile(f);
+    fileInput.value = '';
+  };
+
+  wrap.ondragover = (e) => { e.preventDefault(); wrap.classList.add('drag'); };
+  wrap.ondragleave = () => wrap.classList.remove('drag');
+  wrap.ondrop = (e) => {
+    e.preventDefault(); wrap.classList.remove('drag');
+    for (const f of e.dataTransfer.files) uploadFile(f);
+  };
+
+  modeBtns.append(gisBtn, uploadBtn);
+  wrap.append(
+    el('div', { class: 'img-panel-head' }, el('span', { class: 'img-panel-title' }, 'Comparable Photos'), modeBtns),
+    grid,
+    fileInput,
+  );
+  reRender();
+  return wrap;
+}
+
 function compForm(comp, compIndex) {
   const set = (patch) => compSet(comp, patch);
   return el('div', { class: 'comp-form' },
@@ -839,6 +946,7 @@ function compForm(comp, compIndex) {
       el('h3', {}, `Comparable #${compIndex + 1}`),
       el('button', { class: 'btn tiny danger', onclick: () => removeComp(comp.id) }, 'Remove'),
     ),
+    compPhotosPanel(comp),
     section('Identification', null, null,
       el('div', { class: 'field-grid c2' },
         compTextField('Parcel #', comp, 'parcel'),
@@ -1063,8 +1171,26 @@ function reconcileTab() {
     return box;
   })();
 
+  // "Include Cost Approach" toggle — the on/off switch for the cost approach.
+  // Checking it makes hasCostData() true, which reveals the Cost tab, the cost
+  // weight row below, and the cost sheet in the report. Unchecking hides them.
+  const costToggle = el('label', { class: 'cost-toggle' },
+    el('input', { type: 'checkbox' }),
+    el('span', {}, 'Include Cost Approach'),
+  );
+  const costToggleInput = costToggle.querySelector('input');
+  costToggleInput.checked = !!d.cost.includeInReport;
+  costToggleInput.addEventListener('change', (e) => {
+    d.cost.includeInReport = e.target.checked;
+    markDirty();
+    renderForm();
+    refreshComputed();
+    scheduleAutosave();
+  });
+
   return [
     section('Approach Weights', 'Relative weight assigned to each approach', null,
+      costToggle,
       el('div', { class: 'sched' },
         showCost ? weightRow('Cost Approach', 'cost.valueByCost', 'reconciliation.costWeight') : null,
         showIncome ? weightRow('Income Approach', 'income.valueByIncome', 'reconciliation.incomeWeight') : null,
@@ -1126,6 +1252,75 @@ let coverApnEditing = false;
 let coverApnLast = null;
 export function commitCoverApn() { coverApnEditing = false; }
 
+// Which "key" fields count toward a complete cover, per case type. The badge
+// shows how many are filled so the appraiser knows when they can move on.
+function coverCompletion() {
+  const d = state.data;
+  const p = d.property;
+  const c = d.cover;
+  const key = (v) => (v == null ? '' : String(v)).trim();
+  const sets = {
+    transfer: [
+      key(p.transferDocumentNumber), key(p.ratioCode),
+      (p.salePrice ?? 0) > 0 ? '1' : '',
+      key(p.appraiserId), key(p.section),
+    ],
+    appeal: [
+      key(p.taxYear), key(c.hearingDate), key(c.caseNumber),
+      key(c.applicant), key(c.agent), key(c.presentedBy),
+    ],
+    stipulation: [
+      key(p.stipulationDate), key(c.hearingDate), key(c.applicationNumber),
+      key(c.applicantName), key(c.agentName),
+    ],
+    general: [
+      key(p.purpose), key(p.reportType), key(p.client),
+      key(p.appraiser), key(p.appraiserId), key(p.section),
+    ],
+  };
+  const fields = sets[p.caseType || 'transfer'] || sets.transfer;
+  const filled = fields.filter(Boolean).length;
+  return { filled, total: fields.length, done: filled === fields.length };
+}
+
+// Live-update the cover completion badge (called from refreshComputed so it
+// tracks field edits without a full re-render).
+function updateCoverComplete() {
+  const badge = document.getElementById('cover-complete');
+  if (!badge) return;
+  const { filled, total, done } = coverCompletion();
+  badge.textContent = done ? '✓ Cover complete' : `${filled}/${total} filled`;
+  badge.classList.toggle('done', done);
+}
+
+// Per-tab completion state for the tab-bar status glyphs.
+function tabStatus(tabId) {
+  const d = state.data;
+  const p = d.property;
+  const key = (v) => (v == null ? '' : String(v)).trim();
+  let done = false;
+  switch (tabId) {
+    case 'cover': done = coverCompletion().done; break;
+    case 'subject':
+      done = !!(key(p.address) || key(p.apn) || key(p.legalDescription) || key(d.improvements?.primary?.type));
+      break;
+    case 'sales': done = (d.sales?.comparables || []).length > 0; break;
+    case 'income': done = hasIncomeData(d); break;
+    case 'reconciliation': done = !!(d.reconciliation?.finalValue || d.reconciliation?.weightedValue); break;
+    case 'cost': done = hasCostData(d); break;
+  }
+  return done ? 'done' : 'empty';
+}
+
+// Live-update the tab-bar status glyphs (called from refreshComputed).
+function updateTabStatus() {
+  document.querySelectorAll('.tab-status').forEach((n) => {
+    const st = tabStatus(n.dataset.tab);
+    n.textContent = st === 'done' ? '✓' : '•';
+    n.classList.toggle('done', st === 'done');
+  });
+}
+
 function coverSetupBar(caseSeg) {
   const p = state.data.property;
   const apn = String(p.apn || '').trim();
@@ -1172,6 +1367,7 @@ function coverSetupBar(caseSeg) {
       dateField('Effective Date', 'property.effectiveDate'),
       dateField('Report Date', 'property.reportDate'),
       el('div', { class: 'cs-case' }, caseSeg),
+      el('div', { class: 'cs-complete', id: 'cover-complete' }, '0/0 filled'),
     ),
   );
 }
@@ -1204,6 +1400,7 @@ function coverTab() {
 
   const sections = [
     coverSetupBar(caseSeg),
+    coverPhotoPanel(),
   ];
 
   // Transfer/appeal details — live on the case-specific cover page below.
@@ -1222,27 +1419,34 @@ function coverTab() {
 
   if (caseType === 'transfer') {
     sections.push(
-      subjectImagePanel(),
       section('Transfer Details', 'Transfer-specific fields shown on the report', null,
-        el('div', { class: 'field-grid c4' },
-          textField('Transfer Document #', 'property.transferDocumentNumber', { placeholder: 'e.g. 2026-SR00015' }),
-          textField('Ratio Code', 'property.ratioCode', { placeholder: 'e.g. STT' }),
-          selectField('Property Type', 'improvements.primary.type', TYPE_OPTIONS),
+        el('div', { class: 'field-group' },
+          el('div', { class: 'field-group-label' }, 'Transfer'),
+          el('div', { class: 'field-grid c3' },
+            textField('Transfer Document #', 'property.transferDocumentNumber', { placeholder: 'e.g. 2026-SR00015' }),
+            textField('Ratio Code', 'property.ratioCode', { placeholder: 'e.g. STT' }),
+            selectField('Property Type', 'improvements.primary.type', TYPE_OPTIONS),
+          ),
         ),
-        el('div', { class: 'field-grid c3' },
-          numField('Sale Price', 'property.salePrice', { prefix: '$' }),
-          numField('Enrolled Value', 'cover.totalPosted', { prefix: '$' }),
-          textField('Appraiser ID', 'property.appraiserId', { placeholder: 'e.g. 677' }),
+        el('div', { class: 'field-group' },
+          el('div', { class: 'field-group-label' }, 'Valuation'),
+          el('div', { class: 'field-grid c2' },
+            numField('Sale Price', 'property.salePrice', { prefix: '$' }),
+            numField('Enrolled Value', 'cover.totalPosted', { prefix: '$' }),
+          ),
         ),
-        el('div', { class: 'field-grid c3' },
-          textField('Section', 'property.section', { placeholder: 'e.g. Riverside Commercial' }),
+        el('div', { class: 'field-group' },
+          el('div', { class: 'field-group-label' }, 'Appraiser'),
+          el('div', { class: 'field-grid c2' },
+            textField('Appraiser ID', 'property.appraiserId', { placeholder: 'e.g. 677' }),
+            textField('Section', 'property.section', { placeholder: 'e.g. Riverside Commercial' }),
+          ),
+          areaField('Appraiser Notes', 'property.appraiserNotes', 3),
         ),
-        areaField('Appraiser Notes', 'property.appraiserNotes', 3),
       ),
     );
   } else if (caseType === 'appeal') {
     sections.push(
-      subjectImagePanel(),
       section('Appeal Details', 'Appeal-specific fields shown on the report', null,
         el('div', { class: 'field-grid c3' },
           textField('Tax Year', 'property.taxYear'),
@@ -1266,7 +1470,6 @@ function coverTab() {
     );
   } else if (caseType === 'stipulation') {
     sections.push(
-      subjectImagePanel(),
       section('Stipulation Details', 'Stipulation-specific fields shown on the report', null,
         el('div', { class: 'field-grid c3' },
           textField('Stipulation Date', 'property.stipulationDate', { type: 'date' }),
@@ -1300,7 +1503,6 @@ function coverTab() {
     );
   } else if (caseType === 'general') {
     sections.push(
-      subjectImagePanel(),
       section('General Appraisal', 'A valuation as of a specific date — no transfer, appeal, or stipulation', null,
         el('div', { class: 'field-grid c3' },
           textField('Purpose', 'property.purpose', { placeholder: 'e.g. Refinance, estate, insurance, purchase' }),
@@ -1360,13 +1562,19 @@ const TAB_BUILDERS = {
 export function renderForm() {
   const root = document.getElementById('form-root');
   if (!root) return;
+  // The Cost tab is only reachable while the cost approach is enabled; if it
+  // gets disabled elsewhere, fall back so we never sit on a hidden tab.
+  if (activeTab === 'cost' && !hasCostData(state.data)) activeTab = 'reconciliation';
 
   const tabs = el('div', { class: 'tab-bar' },
     el('div', { class: 'tabs-box' },
-      TABS.map((t) => el('button', {
-        class: `tab ${t.id === activeTab ? 'active' : ''}`,
-        onclick: () => { activeTab = t.id; renderForm(); scrollToSection(t.id); },
-      }, t.label)),
+      TABS.filter((t) => t.id !== 'cost' || hasCostData(state.data)).map((t) => {
+        const st = tabStatus(t.id);
+        return el('button', {
+          class: `tab ${t.id === activeTab ? 'active' : ''}`,
+          onclick: () => { activeTab = t.id; renderForm(); scrollToSection(t.id); },
+        }, t.label, el('span', { class: `tab-status ${st === 'done' ? 'done' : ''}`, 'data-tab': t.id }, st === 'done' ? '✓' : '•'));
+      }),
     ),
   );
 
@@ -1382,6 +1590,11 @@ export function renderForm() {
   // Let main.js inject the APN/Address search box into the cover setup bar
   // (it owns the navigation callbacks, so it can't live in this module).
   document.dispatchEvent(new CustomEvent('form:rendered'));
+
+  // Refresh the cover completion badge + tab status glyphs now that the DOM is
+  // in place (they also track live edits via refreshComputed).
+  updateCoverComplete();
+  updateTabStatus();
 
   // Load the comp repository when the Sales tab is active.
   if (activeTab === 'sales') loadRepo();
