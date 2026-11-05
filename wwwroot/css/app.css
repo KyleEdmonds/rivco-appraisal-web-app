@@ -34,6 +34,15 @@
   --line-strong: #cbd5e1;        /* stronger dividers */
   --hover: rgba(30, 41, 59, 0.05);
   --accent-soft: rgba(184, 134, 11, 0.1);
+  /* --- premium SaaS accents: emerald for financial metrics / final value --- */
+  --accent: #10b981;            /* emerald 500 */
+  --accent-dark: #059669;       /* emerald 600 */
+  --accent-deep: #047857;       /* emerald 700 */
+  --accent-bright: #34d399;     /* emerald 400 (on dark surfaces) */
+  --accent-soft-green: rgba(16, 185, 129, 0.12);
+  --indigo: #4f46e5;            /* indigo 600 (secondary accent) */
+  --indigo-soft: rgba(79, 70, 229, 0.10);
+  --focus-ring: 0 0 0 3px rgba(16, 185, 129, 0.22);
 }
 
 * { box-sizing: border-box; }
@@ -121,7 +130,7 @@ input, select, textarea { font-family: inherit; }
 .tb-headline .sub { font-size: 10px; color: rgba(255,255,255,0.5); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tb-value { text-align: right; line-height: 1.3; flex: 0 0 auto; }
 .tb-value .label { font-size: 9px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--gold-light); font-weight: 700; white-space: nowrap; }
-.tb-value .num { font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tb-value .num { font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--accent-bright); letter-spacing: 0.01em; }
 .tb-group { display: flex; align-items: center; gap: 6px; }
 /* Landing page: hide the top-bar action buttons + appraisal headline/total. */
 #topbar.tb-landing .tb-right { display: none; }
@@ -671,8 +680,10 @@ input, select, textarea { font-family: inherit; }
   font-size: 13px;
   border-radius: 0;
   outline: none;
+  transition: all 0.2s ease-in-out;
 }
-.inp:focus { border-color: #1e293b; box-shadow: 0 0 0 1px #1e293b; }
+.inp:hover { border-color: var(--muted-2); }
+.inp:focus { border-color: var(--accent); box-shadow: var(--focus-ring); }
 .inp[readonly] { background: var(--bg-soft); color: var(--muted); }
 select.inp { height: 30px; }
 textarea.inp { height: auto; padding: 5px 7px; resize: vertical; line-height: 1.4; font-size: 13px; }
@@ -684,8 +695,9 @@ textarea.inp { height: auto; padding: 5px 7px; resize: vertical; line-height: 1.
   overflow: hidden;
   border: 1px solid var(--border-input);
   background: #fff;
+  transition: all 0.2s ease-in-out;
 }
-.numwrap:focus-within { border-color: #1e293b; box-shadow: 0 0 0 1px #1e293b; }
+.numwrap:focus-within { border-color: var(--accent); box-shadow: var(--focus-ring); }
 .numwrap .chip-pre, .numwrap .chip-post {
   display: flex;
   align-items: center;
@@ -736,6 +748,16 @@ textarea.inp { height: auto; padding: 5px 7px; resize: vertical; line-height: 1.
 .field-grid.c2 { grid-template-columns: repeat(2, 1fr); }
 .field-grid.c3 { grid-template-columns: repeat(3, 1fr); }
 .field-grid.c4 { grid-template-columns: repeat(4, 1fr); }
+/* Responsive collapse: keep data-entry grids readable on narrow panes. */
+@media (max-width: 1100px) {
+  .field-grid.c4 { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 860px) {
+  .field-grid.c3 { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 560px) {
+  .field-grid.c2, .field-grid.c3, .field-grid.c4 { grid-template-columns: 1fr; }
+}
 /* keep text inputs the same height as the number/select inputs in a row */
 .field-grid input.inp { height: 30px; }
 /* sub-group label inside a section body (e.g. Transfer / Valuation / Appraiser) */
@@ -776,8 +798,8 @@ textarea.inp { height: auto; padding: 5px 7px; resize: vertical; line-height: 1.
   color: var(--muted);
 }
 .chip .chip-value { font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; border-bottom: 1px solid currentColor; }
-.chip.emphasis { border: 2px solid var(--navy); background: var(--navy); color: #fff; }
-.chip.emphasis .chip-label { color: #cbd5e1; }
+.chip.emphasis { border: 2px solid var(--accent-dark); background: var(--accent-dark); color: #fff; transition: all 0.2s ease-in-out; }
+.chip.emphasis .chip-label { color: rgba(255, 255, 255, 0.75); }
 
 /* --- schedule rows (income / cost / reconciliation) --- */
 .sched { border: 1px solid var(--border); overflow: hidden; }
@@ -822,8 +844,9 @@ textarea.inp { height: auto; padding: 5px 7px; resize: vertical; line-height: 1.
   font-size: 13px;
   font-variant-numeric: tabular-nums;
   outline: none;
+  transition: all 0.2s ease-in-out;
 }
-.weight-row .w-input:focus { border-color: #1e293b; box-shadow: 0 0 0 1px #1e293b; }
+.weight-row .w-input:focus { border-color: var(--accent); box-shadow: var(--focus-ring); }
 .weight-row .w-pct { font-size: 13px; color: var(--muted-2); }
 .total-weight { display: flex; justify-content: space-between; margin-top: 8px; font-size: 13px; color: var(--muted); }
 .total-weight b { font-variant-numeric: tabular-nums; }
@@ -843,29 +866,32 @@ textarea.inp { height: auto; padding: 5px 7px; resize: vertical; line-height: 1.
 }
 .cost-toggle input { width: 15px; height: 15px; accent-color: var(--navy); cursor: pointer; }
 
-/* final value field (reconcile tab) */
+/* final value field (reconcile tab) — the headline financial metric */
 .final-field {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  border: 1px solid var(--border-input);
-  background: var(--bg-soft);
-  padding: 6px 10px;
+  border: 1px solid var(--accent-dark);
+  background: var(--accent-soft-green);
+  padding: 8px 12px;
+  transition: all 0.2s ease-in-out;
 }
-.final-field .ff-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.final-field .ff-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--accent-deep); }
 .final-field input {
-  width: 104px;
+  width: 120px;
   border: 0;
   background: transparent;
   outline: none;
   text-align: right;
-  font-size: 14px;
+  font-size: 17px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
-  color: #334155;
+  color: var(--accent-deep);
   border-bottom: 1px solid currentColor;
+  transition: all 0.2s ease-in-out;
 }
+.final-field input:focus { box-shadow: var(--focus-ring); border-radius: 2px; }
 
 /* rent type segmented control */
 .rent-seg { display: flex; height: 28px; border: 1px solid var(--border-input); }
@@ -886,8 +912,9 @@ textarea.inp { height: auto; padding: 5px 7px; resize: vertical; line-height: 1.
 .repo-filter-search { grid-column: span 2; }
 .repo-filter { min-width: 0; }
 .repo-filter label { display: block; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin-bottom: 1px; }
-.repo-filter input { width: 100%; height: 26px; border: 1px solid var(--border-input); padding: 0 8px; font-size: 12px; outline: none; background: #fff; }
-.repo-filter input:focus { border-color: #1e293b; box-shadow: 0 0 0 1px #1e293b; }
+.repo-filter input { width: 100%; height: 26px; border: 1px solid var(--border-input); padding: 0 8px; font-size: 12px; outline: none; background: #fff; transition: all 0.2s ease-in-out; }
+.repo-filter input:hover { border-color: var(--muted-2); }
+.repo-filter input:focus { border-color: var(--accent); box-shadow: var(--focus-ring); }
 /* Action buttons row (below the filters). */
 .repo-actions { display: flex; gap: 8px; margin-bottom: 8px; }
 .repo-results { max-height: 260px; overflow: auto; border: 1px solid var(--border-soft); background: #fff; }
@@ -975,6 +1002,7 @@ textarea.inp { height: auto; padding: 5px 7px; resize: vertical; line-height: 1.
   white-space: normal;
   word-break: break-word;
   vertical-align: top;
+  transition: background 0.2s ease-in-out;
 }
 .sales-grid td:last-child { border-right: 0; }
 .sales-grid td.row-label { background: var(--navy); color: #fff; font-weight: 600; font-size: 13px; }
@@ -990,8 +1018,8 @@ textarea.inp { height: auto; padding: 5px 7px; resize: vertical; line-height: 1.
   padding: 5px 10px;
   border-bottom: 2px solid rgba(30, 41, 59, 0.7);
 }
-.sales-grid tr.bold-row td { font-weight: 700; background: rgba(184, 134, 11, 0.1); }
-.sales-grid tr:hover td:not(.row-label):not(.subject) { background: rgba(184, 134, 11, 0.1); }
+.sales-grid tr.bold-row td { font-weight: 700; background: var(--accent-soft-green); }
+.sales-grid tr:hover td:not(.row-label):not(.subject) { background: var(--accent-soft-green); }
 /* Subject characteristics summary card (above the sales comparison grid). */
 .subj-summary { border: 1px solid var(--navy-light); margin-bottom: 12px; }
 .subj-summary-head {
@@ -1133,6 +1161,34 @@ textarea.inp { height: auto; padding: 5px 7px; resize: vertical; line-height: 1.
 }
 .sheet-footer .f-row { display: flex; justify-content: space-between; font-size: 9px; color: #64748b; }
 .sheet-footer .f-conf { margin-top: 4px; text-align: center; font-size: 8px; text-transform: uppercase; letter-spacing: 0.15em; color: #94a3b8; }
+
+/* Final reconciled value callout (reconciliation sheet) — the headline
+   number of the report: large, heavy, emerald. */
+.final-value {
+  margin-top: 14px;
+  border: 2px solid var(--accent-dark);
+  background: var(--accent-soft-green);
+  padding: 12px 18px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+.final-value-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent-deep);
+}
+.final-value-num {
+  font-size: 26px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent-deep);
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
 
 /* sheet content */
 .sheet-h {

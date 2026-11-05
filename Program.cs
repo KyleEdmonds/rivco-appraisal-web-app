@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using RivCo;
+using RivCo.Models;
 
 var builder = WebApplication.CreateBuilder(args);
 var app = builder.Build();
@@ -158,19 +159,26 @@ app.MapGet("/api/appraisals/{id}", (string id) =>
     using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT data FROM appraisals WHERE id = $id";
     cmd.Parameters.AddWithValue("$id", id);
-    var data = cmd.ExecuteScalar() as string;
-    return data is null ? Results.NotFound() : Results.Ok(new { id, data = JsonNode.Parse(data) });
+    var raw = cmd.ExecuteScalar() as string;
+    if (raw is null) return Results.NotFound();
+    // Normalize before returning: any section missing from an older document
+    // is filled with model defaults, so the client always gets a complete doc.
+    var doc = AppraisalData.Normalize(AppraisalJson.Deserialize(raw));
+    return Results.Ok(new { id, data = doc });
 });
 
 app.MapPost("/api/appraisals", async (HttpContext ctx) =>
 {
     var body = await JsonNode.ParseAsync(ctx.Request.Body) as JsonObject;
-    var data = body?["data"] ?? body;
-    if (data is null) return Results.BadRequest(new { error = "missing 'data'" });
+    var dataNode = body?["data"] ?? body;
+    if (dataNode is null) return Results.BadRequest(new { error = "missing 'data'" });
 
+    // Parse into the typed model and normalize: missing sections are filled
+    // with model defaults before the document is committed to the database.
+    var doc = AppraisalData.Normalize(AppraisalJson.DeserializeNode(dataNode));
     var id = Guid.NewGuid().ToString("N");
     var now = DateTime.UtcNow.ToString("o");
-    var (apn, address, city, reportDate, finalValue) = ExtractSummary(data);
+    var (apn, address, city, reportDate, finalValue) = ExtractSummary(doc);
 
     using var conn = Open();
     using var cmd = conn.CreateCommand();
@@ -184,7 +192,7 @@ app.MapPost("/api/appraisals", async (HttpContext ctx) =>
     cmd.Parameters.AddWithValue("$city", (object?)city ?? DBNull.Value);
     cmd.Parameters.AddWithValue("$rd", (object?)reportDate ?? DBNull.Value);
     cmd.Parameters.AddWithValue("$fv", (object?)finalValue ?? DBNull.Value);
-    cmd.Parameters.AddWithValue("$data", data.ToJsonString());
+    cmd.Parameters.AddWithValue("$data", AppraisalJson.Serialize(doc));
     cmd.Parameters.AddWithValue("$now", now);
     cmd.ExecuteNonQuery();
     return Results.Ok(new { id });
@@ -193,11 +201,14 @@ app.MapPost("/api/appraisals", async (HttpContext ctx) =>
 app.MapPut("/api/appraisals/{id}", async (string id, HttpContext ctx) =>
 {
     var body = await JsonNode.ParseAsync(ctx.Request.Body) as JsonObject;
-    var data = body?["data"] ?? body;
-    if (data is null) return Results.BadRequest(new { error = "missing 'data'" });
+    var dataNode = body?["data"] ?? body;
+    if (dataNode is null) return Results.BadRequest(new { error = "missing 'data'" });
 
+    // Parse into the typed model and normalize before committing, so the
+    // stored document and the denormalized summary columns always agree.
+    var doc = AppraisalData.Normalize(AppraisalJson.DeserializeNode(dataNode));
     var now = DateTime.UtcNow.ToString("o");
-    var (apn, address, city, reportDate, finalValue) = ExtractSummary(data);
+    var (apn, address, city, reportDate, finalValue) = ExtractSummary(doc);
 
     using var conn = Open();
     using var cmd = conn.CreateCommand();
@@ -211,7 +222,7 @@ app.MapPut("/api/appraisals/{id}", async (string id, HttpContext ctx) =>
     cmd.Parameters.AddWithValue("$city", (object?)city ?? DBNull.Value);
     cmd.Parameters.AddWithValue("$rd", (object?)reportDate ?? DBNull.Value);
     cmd.Parameters.AddWithValue("$fv", (object?)finalValue ?? DBNull.Value);
-    cmd.Parameters.AddWithValue("$data", data.ToJsonString());
+    cmd.Parameters.AddWithValue("$data", AppraisalJson.Serialize(doc));
     cmd.Parameters.AddWithValue("$now", now);
     var n = cmd.ExecuteNonQuery();
     return n == 0 ? Results.NotFound() : Results.Ok(new { id });
@@ -240,10 +251,11 @@ app.MapGet("/api/permanent-comps", () =>
     using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT data FROM permanent_comps ORDER BY created_at DESC";
     using var reader = cmd.ExecuteReader();
-    var list = new List<object>();
+    var list = new List<CompRecord>();
     while (reader.Read())
     {
-        list.Add(JsonNode.Parse(reader.GetString(0)));
+        var rec = AppraisalJson.DeserializeComp(reader.GetString(0));
+        if (rec is not null) list.Add(rec);
     }
     return Results.Ok(list);
 });
@@ -251,14 +263,17 @@ app.MapGet("/api/permanent-comps", () =>
 app.MapPost("/api/finalize", async (HttpContext ctx) =>
 {
     var body = await JsonNode.ParseAsync(ctx.Request.Body) as JsonObject;
-    var data = body?["data"] as JsonObject;
-    if (data is null) return Results.BadRequest(new { error = "missing 'data'" });
-    var (apn, address, city, reportDate, finalValue) = ExtractSummary(data);
+    var dataNode = body?["data"];
+    if (dataNode is null) return Results.BadRequest(new { error = "missing 'data'" });
+    var doc = AppraisalData.Normalize(AppraisalJson.DeserializeNode(dataNode));
+    var (apn, address, city, reportDate, finalValue) = ExtractSummary(doc);
     if (string.IsNullOrWhiteSpace(apn)) return Results.BadRequest(new { error = "appraisal has no APN" });
 
     // Canonical SHA-256 of the appraisal content (dedup key, with APN).
+    // Hash the raw request node — not the normalized model — so rows
+    // archived before the typed-model refactor keep deduplicating correctly.
     var contentHash = Convert.ToHexStringLower(
-        System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(Canonicalize(data))));
+        System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(Canonicalize(dataNode))));
     var now = DateTime.UtcNow.ToString("o");
 
     using var conn = Open();
@@ -272,7 +287,7 @@ app.MapPost("/api/finalize", async (HttpContext ctx) =>
             return Results.Ok(new { success = true, deduplicated = true, existingId = existing, contentHash });
     }
 
-    var comp = SnapshotToCompRecord(data, apn, address, now, finalValue ?? 0);
+    var comp = SnapshotToCompRecord(doc, apn, address, now, finalValue ?? 0);
     var id = Guid.NewGuid().ToString("N");
     using (var cmd = conn.CreateCommand())
     {
@@ -288,7 +303,7 @@ app.MapPost("/api/finalize", async (HttpContext ctx) =>
         cmd.Parameters.AddWithValue("$price", finalValue ?? 0);
         cmd.Parameters.AddWithValue("$hash", contentHash);
         cmd.Parameters.AddWithValue("$src", Str(body?["appraisalId"]) ?? "");
-        cmd.Parameters.AddWithValue("$data", comp.ToJsonString());
+        cmd.Parameters.AddWithValue("$data", AppraisalJson.SerializeComp(comp));
         cmd.Parameters.AddWithValue("$now", now);
         cmd.ExecuteNonQuery();
     }
@@ -309,15 +324,14 @@ app.MapGet("/api/tenant", () =>
     using var cmd = conn.CreateCommand();
     cmd.CommandText = "SELECT data FROM tenant WHERE id = 'config'";
     var data = cmd.ExecuteScalar() as string;
-    return data is null
-        ? Results.Ok(new { schemaVersion = "1.0", county = "", countyName = "", officeName = "", sealUrl = "" })
-        : Results.Ok(JsonNode.Parse(data));
+    return Results.Ok(AppraisalJson.DeserializeTenant(data) ?? new TenantConfig());
 });
 
 app.MapPut("/api/tenant", async (HttpContext ctx) =>
 {
-    var data = await JsonNode.ParseAsync(ctx.Request.Body);
-    if (data is null) return Results.BadRequest(new { error = "invalid json" });
+    var body = await JsonNode.ParseAsync(ctx.Request.Body);
+    if (body is null) return Results.BadRequest(new { error = "invalid json" });
+    var tenant = AppraisalJson.DeserializeTenant(body.ToJsonString()) ?? new TenantConfig();
     var now = DateTime.UtcNow.ToString("o");
     using var conn = Open();
     using var cmd = conn.CreateCommand();
@@ -325,7 +339,7 @@ app.MapPut("/api/tenant", async (HttpContext ctx) =>
         INSERT INTO tenant (id, data, updated_at) VALUES ('config', $data, $now)
         ON CONFLICT(id) DO UPDATE SET data=$data, updated_at=$now
         """;
-    cmd.Parameters.AddWithValue("$data", data.ToJsonString());
+    cmd.Parameters.AddWithValue("$data", AppraisalJson.SerializeTenant(tenant));
     cmd.Parameters.AddWithValue("$now", now);
     cmd.ExecuteNonQuery();
     return Results.Ok(new { saved = true });
@@ -759,24 +773,16 @@ app.MapFallbackToFile("index.html");
 
 app.Run("http://127.0.0.1:5000");
 
-// Pull denormalized summary fields out of the appraisal JSON document.
-static (string? apn, string? address, string? city, string? reportDate, double? finalValue) ExtractSummary(JsonNode? data)
+// Pull denormalized summary fields out of a typed appraisal document.
+static (string? apn, string? address, string? city, string? reportDate, double? finalValue) ExtractSummary(AppraisalData data)
 {
-    string? apn = null, address = null, city = null, reportDate = null;
-    double? finalValue = null;
-    if (data is JsonObject o)
-    {
-        if (o["property"] is JsonObject p)
-        {
-            apn = Str(p["apn"]);
-            address = Str(p["address"]);
-            city = Str(p["city"]);
-            reportDate = Str(p["reportDate"]);
-        }
-        if (o["reconciliation"] is JsonObject r && r["finalValue"] is JsonValue v && v.TryGetValue<double>(out var fv))
-            finalValue = fv;
-    }
-    return (apn, address, city, reportDate, finalValue);
+    var p = data.Property;
+    return (
+        string.IsNullOrWhiteSpace(p.Apn) ? null : p.Apn,
+        string.IsNullOrWhiteSpace(p.Address) ? null : p.Address,
+        string.IsNullOrWhiteSpace(p.City) ? null : p.City,
+        string.IsNullOrWhiteSpace(p.ReportDate) ? null : p.ReportDate,
+        data.Reconciliation.FinalValue);
 }
 
 // ---------------------------------------------------------------------------
@@ -809,51 +815,42 @@ static string Canonicalize(JsonNode? value)
 }
 
 // Convert a finalized appraisal into a permanent CompRecord.
-// Ported from RepositoryContext.tsx `snapshotToCompRecord`.
-static JsonObject SnapshotToCompRecord(JsonObject data, string apn, string? address, string completedDate, double finalValue)
+// Ported from RepositoryContext.tsx `snapshotToCompRecord`; now typed end
+// to end (AppraisalData in, CompRecord out, AppraisalJson on the wire).
+static CompRecord SnapshotToCompRecord(AppraisalData data, string apn, string? address, string completedDate, double finalValue)
 {
-    var p = data["property"] as JsonObject;
-    var imp = data["improvements"]?["primary"] as JsonObject;
-    var land = data["land"] as JsonObject;
-    var yearBuilt = Num(imp?["yearBuilt"]);
-    var comp = new JsonObject
+    var p = data.Property;
+    var imp = data.Improvements.Primary;
+    var land = data.Land;
+    var yearBuilt = imp.YearBuilt;
+    return new CompRecord
     {
-        ["apn"] = apn,
-        ["address"] = address ?? Str(p?["address"]) ?? "",
-        ["city"] = Str(p?["city"]) ?? "",
-        ["saleDate"] = completedDate.Length >= 10 ? completedDate[..10] : completedDate,
-        ["price"] = finalValue,
-        ["age"] = yearBuilt > 0 ? Math.Max(0, DateTime.UtcNow.Year - (int)yearBuilt) : 0,
-        ["quality"] = Str(imp?["quality"]) ?? "",
-        ["condition"] = Str(imp?["condition"]) ?? "",
-        ["landArea"] = Num(land?["acres"]),
-        ["buildingArea"] = Num(imp?["grossFloorArea"]),
-        ["clearHeight"] = 0,
-        ["zoning"] = Str(land?["zoning"]) ?? "",
-        ["isArmsLength"] = true,
-        ["sourceReport"] = apn,
-        ["propertyType"] = Str(imp?["type"]) ?? "",
-        ["subjectApn"] = "",
-        ["photoUrl"] = "",
+        Apn = apn,
+        Address = address ?? p.Address,
+        City = p.City,
+        SaleDate = completedDate.Length >= 10 ? completedDate[..10] : completedDate,
+        Price = finalValue,
+        Age = yearBuilt > 0 ? Math.Max(0, DateTime.UtcNow.Year - yearBuilt) : 0,
+        Quality = imp.Quality,
+        Condition = imp.Condition,
+        LandArea = land.Acres,
+        BuildingArea = imp.GrossFloorArea,
+        ClearHeight = 0,
+        Zoning = land.Zoning,
+        IsArmsLength = true,
+        SourceReport = apn,
+        PropertyType = imp.Type,
+        SubjectApn = "",
+        PhotoUrl = "",
         // Transfer-completion matching: a Rule 2 transfer is "completed" when
         // a finalized appraisal is archived for the same document number +
         // effective date.
-        ["docNumber"] = Str(p?["transferDocumentNumber"]) ?? "",
-        ["effectiveDate"] = Str(p?["effectiveDate"]) ?? "",
+        DocNumber = p.TransferDocumentNumber,
+        EffectiveDate = p.EffectiveDate,
+        // The 12 grid adjustments default to 0 for repository comps.
     };
-    foreach (var f in new[]
-    {
-        "adjBuildingSize", "adjLocation", "adjCornerSite", "adjAge", "adjQuality",
-        "adjCondition", "adjTenantsUse", "adjOccupancy", "adjLandBldgRatio",
-        "adjFreeway", "adjMarketConditions", "adjConditionOfSale",
-    })
-    {
-        comp[f] = 0;
-    }
-    return comp;
 }
 
 static string? Str(JsonNode? n) => n is JsonValue v && v.TryGetValue<string>(out var s) ? s : null;
-static double Num(JsonNode? n) => n is JsonValue v && v.TryGetValue<double>(out var d) ? d : 0;
 // __refresh_marker__
 
