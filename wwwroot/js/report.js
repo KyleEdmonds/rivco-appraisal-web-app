@@ -6,6 +6,7 @@ import {
   fmtCurrency, fmtCurrencyRounded, fmtNumber, fmtPct, fmtAcresNum, titleCase, normalizeCity, fmtDate, todayISO,
   generateReconciliationNarrative, resolveSubjectImageUrl, resolveSubjectImageUrls,
   resolveCoverPhotoUrl, resolveCompPhotoUrls,
+  computePortfolioAggregate, reportMode,
 } from './core.js';
 
 function el(tag, attrs = {}, ...children) {
@@ -772,11 +773,201 @@ function mapSheet(d) {
   ];
 }
 
+// --- portfolio (multi-parcel) report views -----------------------------------
+// Rendered when reportMode() === 'portfolio'. Each mirrors the reference app's
+// PortfolioViews.tsx, built from the shared el/heading/kv/table primitives.
+
+function portfolioBanner(agg) {
+  return el('div', { class: 'pf-banner' },
+    el('span', { class: 'pf-banner-title' }, 'Combined Portfolio Summary'),
+    el('span', { class: 'pf-banner-count' }, `${agg.parcelCount} parcel(s)`),
+  );
+}
+
+function valueCallout(label, value, sub) {
+  return el('div', { class: 'pf-callout' },
+    el('div', { class: 'pf-callout-label' }, label),
+    el('div', { class: 'pf-callout-value' }, value),
+    sub ? el('div', { class: 'pf-callout-sub' }, sub) : null,
+  );
+}
+
+// Extract a location description for a parcel: street address, stored
+// intersection (from reverse-geocode), legal description intersection, or
+// coordinates as a last resort.
+function parcelIntersection(p) {
+  const addr = p.property?.address;
+  if (addr && addr !== '- No Situs -') return addr;
+  // Stored intersection from reverse-geocode (fetched by fetchParcelCoordinates).
+  if (p.property?.intersection) return `Near ${p.property.intersection}`;
+  const ld = p.property?.legalDescription || '';
+  const m = ld.match(/AT\s+INTERSECTION\s+OF\s+(.{2,80}?)(?:\s+AND\s+(.{2,80}?))?/i);
+  if (m) return (m[1] + (m[2] ? ' and ' + m[2] : '')).trim();
+  // No address, no geocoded street, no legal intersection → "No Situs".
+  // (Coordinates are intentionally NOT shown in the report.)
+  return ld || 'No Situs';
+}
+
+function portfolioCoverView(agg) {
+  const parcels = state.portfolio.parcels;
+  const anyCostIncluded = parcels.some((p) => !!p.cost?.includeInReport);
+  const cards = [
+    ['Sales', fmtCurrencyRounded(agg.totalSalesValue)],
+    ['Income', fmtCurrencyRounded(agg.totalIncomeValue)],
+  ];
+  if (anyCostIncluded) cards.push(['Cost', fmtCurrencyRounded(agg.totalCostValue)]);
+  // Combined parcel map (all parcels in one satellite image).
+  const apns = parcels.map((p) => p.property?.apn).filter(Boolean);
+  const mapBlock = apns.length > 1
+    ? el('div', { class: 'pf-cover-block pf-map-block' },
+        heading('Portfolio Map'),
+        el('div', { class: 'pf-map', 'data-apns': apns.join(',') },
+          el('div', { class: 'pin-map-canvas pin-map-loading' }, 'Loading combined parcel map…'),
+        ),
+      )
+    : null;
+  // Transfer details from the primary parcel (first in portfolio).
+  const primary = parcels[0];
+  const p = primary?.property || {};
+  const transferDetails = el('div', { class: 'pf-cover-block' },
+    heading('Transfer Details'),
+    kv([
+      ['Date of Transfer', fmtDate(p.effectiveDate)],
+      ['Document Number', p.transferDocumentNumber],
+      ['Ratio Code', p.ratioCode],
+    ]),
+  );
+  return el('div', { class: 'pf-cover' },
+    el('div', { class: 'pf-cover-head' },
+      el('div', { class: 'pf-cover-kicker' }, 'Multi-Parcel Portfolio'),
+      el('div', { class: 'pf-cover-title' }, 'Portfolio Appraisal'),
+      el('div', { class: 'pf-cover-rule' }),
+    ),
+    transferDetails,
+    el('div', { class: 'pf-cover-block' },
+      heading('Portfolio Composition'),
+      kv(parcels.map((p, i) => [
+        `Parcel ${i + 1} · APN ${p.property?.apn || '—'}`,
+        el('span', { 'data-parcel-idx': i },
+          [p.property?.address && p.property.address !== '- No Situs -' ? p.property.address : parcelIntersection(p),
+           p.improvements?.primary?.type || p.land?.zoning || ''].filter(Boolean).join(' · ')),
+      ])),
+    ),
+    mapBlock,
+    el('div', { class: 'pf-cover-block' },
+      heading('Summary of Value'),
+      el('div', { class: `pf-cards ${anyCostIncluded ? 'cols-3' : 'cols-2'}` },
+        ...cards.map(([label, value]) => el('div', { class: 'pf-card' },
+          el('div', { class: 'pf-card-label' }, label),
+          el('div', { class: 'pf-card-value' }, value),
+        )),
+      ),
+      el('div', { class: 'pf-callout-wrap' },
+        valueCallout('Total Portfolio Value', fmtCurrencyRounded(agg.totalFinalValue), `${agg.parcelCount} parcels · ${fmtAcresNum(agg.totalAcres)} ac`),
+      ),
+    ),
+  );
+}
+
+function portfolioAggregateView(agg) {
+  const parcels = state.portfolio.parcels;
+  const gfaOf = (p) => (p.improvements?.primary?.grossFloorArea ?? 0) +
+    (p.improvements?.outbuildings ?? []).reduce((s, o) => s + (o?.grossFloorArea ?? 0), 0);
+  return el('div', {},
+    portfolioBanner(agg),
+    heading('Portfolio Totals'),
+    kv([
+      ['Total Gross Floor Area', `${fmtNumber(agg.totalSqft)} sq ft`],
+      ['Total Net Leasable Area', `${fmtNumber(agg.totalNla)} sq ft`],
+      ['Total Site Area', `${fmtNumber(agg.totalSiteSqFt)} sq ft`],
+      ['Total Acreage', `${fmtAcresNum(agg.totalAcres)} ac`],
+      ['Total Land Value', fmtCurrency(agg.totalLandValue)],
+      ['Total Final Value', fmtCurrency(agg.totalFinalValue)],
+    ]),
+    heading('Per-Parcel Characteristics'),
+    table(
+      ['#', 'APN', 'Location / Intersection', 'Property Type', 'Zoning', 'Site (sq ft)', 'GFA (sq ft)', 'Land Value', 'Final Value'],
+      [
+        ...parcels.map((p, i) => [
+          i + 1,
+          p.property?.apn || '—',
+          el('span', { 'data-parcel-idx': i }, parcelIntersection(p)),
+          p.improvements?.primary?.type || '—',
+          p.land?.zoning || '—',
+          fmtNumber(p.land?.siteAreaSqFt ?? 0),
+          fmtNumber(gfaOf(p)),
+          fmtCurrency(p.land?.landValue ?? 0),
+          fmtCurrency(computeAppraisal(p).totalAssessed),
+        ]),
+        ['', 'Total', '', '', '', fmtNumber(agg.totalSiteSqFt), fmtNumber(agg.totalSqft), fmtCurrency(agg.totalLandValue), fmtCurrency(agg.totalFinalValue)],
+      ],
+    ),
+  );
+}
+
+function portfolioApproachView(approach, agg) {
+  const parcels = state.portfolio.parcels;
+  const titles = { cost: 'Cost Approach', income: 'Income Approach', sales: 'Sales Comparison', reconciliation: 'Reconciliation' };
+  const rows = parcels.map((p, i) => {
+    const c = computeAppraisal(p);
+    const value = approach === 'cost' ? c.cost.valueByCost
+      : approach === 'income' ? c.income.valueByIncome
+      : approach === 'sales' ? c.sales.valueBySales
+      : c.totalAssessed;
+    return [`${i + 1}. ${p.property?.address || '—'}`, p.property?.apn || '—', fmtCurrency(value)];
+  });
+  const total = approach === 'cost' ? agg.totalCostValue
+    : approach === 'income' ? agg.totalIncomeValue
+    : approach === 'sales' ? agg.totalSalesValue
+    : agg.totalFinalValue;
+  return el('div', {},
+    portfolioBanner(agg),
+    heading(`${titles[approach]} — Portfolio Sums`),
+    table(['Parcel', 'APN', 'Indicated Value'], [...rows, ['Total', '', fmtCurrency(total)]]),
+    el('div', { class: 'pf-callout-wrap' }, valueCallout(`Total ${titles[approach]}`, fmtCurrency(total))),
+  );
+}
+
 export function renderReport() {
   const root = document.getElementById('report-root');
   if (!root) return;
   const d = state.data;
   const comp = computeAppraisal(d);
+  // Portfolio mode: portfolio cover + standard body sheets (same as single parcel).
+  if (reportMode() === 'portfolio') {
+    const agg = computePortfolioAggregate(state.portfolio.parcels);
+    const pfCover = portfolioCoverView(agg);
+    const bodySheets = [
+      { section: 'subject', content: subjectPropertySheet(d, comp) },
+      { section: 'sales', content: salesSheet(d, comp) },
+      ...compDetailSheets(d, comp).map((c) => ({ section: 'sales', content: c })),
+      { section: 'subject', content: mapSheet(d, comp) },
+      ...(hasIncomeData(d) ? [{ section: 'income', content: incomeSheet(d, comp) }] : []),
+      ...(hasCostData(d) ? [{ section: 'cost', content: costSheet(d, comp) }] : []),
+      { section: 'reconciliation', content: reconciliationSheet(d, comp) },
+    ];
+    const total = bodySheets.length + 1;
+    root.replaceChildren(
+      el('div', { class: 'sheet-scale', 'data-section': 'cover' }, sheet(1, total, pfCover)),
+      ...bodySheets.map((b, i) => el('div', { class: 'sheet-scale', 'data-section': b.section }, sheet(i + 2, total, b.content))),
+    );
+    const meta = document.querySelector('.staging-toolbar .st-meta');
+    if (meta) meta.textContent = `${total} sheets · 8.5×11`;
+    fitSheets();
+    updateTopBar();
+    // Load the combined parcel map image (async).
+    root.querySelectorAll('.pf-map[data-apns]').forEach((box) => {
+      const apns = box.dataset.apns;
+      box.innerHTML = `<div class="pin-map-canvas pin-map-loading">Loading combined parcel map…</div>`;
+      fetch(`/api/parcel-image/multi?apns=${encodeURIComponent(apns)}`)
+        .then((r) => r.ok ? r : Promise.reject(new Error('unavailable')))
+        .then(() => {
+          box.innerHTML = `<div class="pin-map-canvas"><img class="pin-map-img" src="/api/parcel-image/multi?apns=${encodeURIComponent(apns)}" alt="Combined parcel map"></div><div class="pin-map-cap"><span>Portfolio Map · ${apns.split(',').length} parcels · satellite</span><span class="pin-map-cap-right"><span class="pin-map-attr">Imagery © Esri/World Imagery</span></span></div>`;
+        })
+        .catch(() => { box.innerHTML = `<div class="pin-map-canvas pin-map-loading">Combined map unavailable.</div>`; });
+    });
+    return;
+  }
   // Each sheet is tagged with the form-tab section it belongs to, so the left
   // pane can scroll the preview to the matching page when a tab is selected.
   const bodySheets = [
@@ -822,13 +1013,17 @@ export function zoomFit() {
 
 // Scale each sheet to fit the pane width (like the original zoom wrapper):
 // wrapper is exactly the scaled size, inner sheet scales from top-left.
+// Uses the sheet's actual rendered height (not a fixed 1056) so tall sheets
+// (big sales grids, portfolio cover) aren't clipped in the preview.
 export function fitSheets() {
   const s = getZoom();
   document.querySelectorAll('#report-root .sheet-scale').forEach((w) => {
     const sh = w.firstElementChild;
     if (!sh) return;
+    // Measure the sheet's natural (unscaled) height.
+    const naturalH = sh.scrollHeight || SHEET_H;
     w.style.width = `${SHEET_W * s}px`;
-    w.style.height = `${SHEET_H * s}px`;
+    w.style.height = `${naturalH * s}px`;
     sh.style.width = `${SHEET_W}px`;
     sh.style.transform = `scale(${s})`;
     sh.style.transformOrigin = 'top left';
@@ -851,14 +1046,24 @@ export function scrollToSection(sectionId) {
 
 // Live top bar: property headline + total assessed (matches original TopBar).
 function updateTopBar() {
-  const p = state.data.property;
-  const comp = computeAppraisal(state.data);
   const addr = document.getElementById('tb-addr');
   const sub = document.getElementById('tb-sub');
   const val = document.getElementById('tb-value');
+  const label = document.querySelector('.tb-value .label');
+  if (reportMode() === 'portfolio') {
+    const agg = computePortfolioAggregate(state.portfolio.parcels);
+    if (addr) addr.textContent = `Portfolio (${agg.parcelCount} parcels)`;
+    if (sub) sub.textContent = 'MULTI-PARCEL';
+    if (val) val.textContent = fmtCurrency(agg.totalFinalValue);
+    if (label) label.textContent = 'Total Portfolio Value';
+    return;
+  }
+  const p = state.data.property;
+  const comp = computeAppraisal(state.data);
   if (addr) addr.textContent = [titleCase(p.address), normalizeCity(p.city)].map((v) => (v ?? '').trim()).filter(Boolean).join(', ') || '—';
   if (sub) sub.textContent = `APN ${p.apn || '—'} · Effective ${fmtDate(p.effectiveDate)}`;
   if (val) val.textContent = fmtCurrency(comp.totalAssessed);
+  if (label) label.textContent = 'Total Assessed';
 }
 
 // --- PDF ---------------------------------------------------------------------

@@ -3,7 +3,7 @@
 // Left pane: control bar (dates + APN search) + tabbed form
 // Right pane: report staging. Draggable split handle between them.
 // ---------------------------------------------------------------------------
-import { api, state, saveCurrent, loadAppraisal, newAppraisal, fmtCurrency, fmtNumber, fmtAcresNum, titleCase, normalizeCity, fmtDate, computeAppraisal, scheduleAutosave, exportWip, importWip, workspace, activeTab, addTab, closeTab, snapshotActiveTab, restoreWorkspaceLocal, clearLocalWorkspace, migrateSubjectImage, normalizeParcel } from './core.js';
+import { api, state, saveCurrent, loadAppraisal, newAppraisal, fmtCurrency, fmtNumber, fmtAcresNum, titleCase, normalizeCity, fmtDate, computeAppraisal, scheduleAutosave, exportWip, workspace, activeTab, addTab, closeTab, snapshotActiveTab, restoreWorkspaceLocal, clearLocalWorkspace, migrateSubjectImage, normalizeParcel, applyPortfolio, normalizePortfolio, portfolioPayload, isPortfolio, activeParcelIndex, reportMode, selectParcel, setViewMode, addParcel, removeParcel, resetActiveParcel, computePortfolioAggregate, createEmptyParcel } from './core.js';
 import { renderForm, setTab, loadRepo, commitCoverApn } from './form.js';
 import { renderReport, fitSheets, zoomBy, zoomFit } from './report.js';
 
@@ -65,7 +65,7 @@ function renderTopBar() {
       ),
       el('span', { class: 'tb-sep' }),
       el('div', { class: 'tb-group' },
-        el('button', { class: 'btn', id: 'btn-main', title: 'Back to the main landing page', onclick: goMain }, '← Main'),
+        el('button', { class: 'btn', id: 'btn-back', title: 'Back to the previous page', onclick: goBack }, '← Back'),
       ),
       ...(RULE2_ENABLED ? [
         el('div', { class: 'tb-group' },
@@ -73,57 +73,21 @@ function renderTopBar() {
         ),
       ] : []),
       el('div', { class: 'tb-group' },
-        el('button', { class: 'btn', id: 'btn-new' }, '+ New'),
         el('button', { class: 'btn primary', id: 'btn-save-wip', title: 'Save this appraisal to the server as a work-in-progress (WIP). The working copy is also kept locally so a refresh never loses it.' }, '💾 Save as WIP'),
         el('span', { class: 'save-status', id: 'save-status' }, ''),
-        el('button', { class: 'btn', id: 'btn-print' }, 'Print'),
+        el('button', { class: 'btn finalize', id: 'btn-finalize', title: 'Save this appraisal and archive it as a permanent sales comp' }, '✓ Finalize'),
       ),
-      el('div', { class: 'tb-group wip-wrap' },
-        el('button', { class: 'btn', id: 'btn-wip', title: 'More' }, '⋯'),
-        el('div', { class: 'wip-menu', id: 'wip-menu' },
-          el('button', { class: 'wip-item', id: 'btn-wip-export', title: 'Export work-in-progress as a JSON file' }, 'Export WIP…'),
-          el('button', { class: 'wip-item', id: 'btn-wip-import', title: 'Import work-in-progress from a JSON file' }, 'Import WIP…'),
-        ),
+      el('div', { class: 'tb-group' },
+        el('button', { class: 'btn', id: 'btn-wip-archive', title: 'Browse work-in-progress appraisals saved to the server' }, 'WIP Archive'),
+        el('button', { class: 'btn', id: 'btn-final-archive', title: 'Browse finalized appraisals (permanent comps)' }, 'Final Archive'),
       ),
     ),
   );
   if (RULE2_ENABLED) document.getElementById('btn-rule2').onclick = showRule2;
-  document.getElementById('btn-new').onclick = openNew;
   document.getElementById('btn-save-wip').onclick = onSave;
-  document.getElementById('btn-print').onclick = () => window.print();
-  // WIP dropdown: toggle the menu. It closes on outside click via the
-  // module-level document handler (bound once, not here, to avoid stacking).
-  const wipBtn = document.getElementById('btn-wip');
-  const wipMenu = document.getElementById('wip-menu');
-  wipBtn.onclick = (e) => { e.stopPropagation(); wipMenu.classList.toggle('open'); };
-  document.getElementById('btn-wip-export').onclick = () => {
-    try { exportWip(); toast('WIP exported'); } catch (e) { toast(`Export failed: ${e.message}`, true); }
-  };
-  document.getElementById('btn-wip-import').onclick = () => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = 'application/json,.json';
-    input.onchange = async () => {
-      const file = input.files[0];
-      if (!file) return;
-      try {
-        const data = await importWip(file);
-        if (!confirm('Import this WIP file? It will open in a new tab.')) return;
-        snapshotActiveTab();   // preserve the active tab's edits before replacing state
-        state.id = null;
-        state.data = data;
-        state.dirty = true;
-        addTab({ id: null, apn: data.property?.apn || '', address: data.property?.address || '', dirty: true });
-        showAppraisal();
-        renderTabs();
-        scheduleAutosave();
-        toast('WIP imported');
-      } catch (e) {
-        toast(`Import failed: ${e.message}`, true);
-      }
-    };
-    input.click();
-  };
+  document.getElementById('btn-finalize').onclick = onFinalize;
+  document.getElementById('btn-wip-archive').onclick = () => showArchive('wip');
+  document.getElementById('btn-final-archive').onclick = () => showArchive('final');
 }
 
 // Hide the top-bar action buttons (and the appraisal headline/total) on the
@@ -134,13 +98,23 @@ function setTopBarLanding(on) {
 
 // Keep the top-bar headline + total assessed in sync with the form.
 export function refreshTopBar() {
-  const d = state.data;
   const addr = document.getElementById('tb-addr');
   const sub = document.getElementById('tb-sub');
   const val = document.getElementById('tb-value');
+  const label = document.querySelector('.tb-value .label');
+  if (reportMode() === 'portfolio') {
+    const agg = computePortfolioAggregate(state.portfolio.parcels);
+    if (addr) addr.textContent = `Portfolio (${agg.parcelCount} parcels)`;
+    if (sub) sub.textContent = 'MULTI-PARCEL';
+    if (val) val.textContent = fmtCurrency(agg.totalFinalValue);
+    if (label) label.textContent = 'Total Portfolio Value';
+    return;
+  }
+  const d = state.data;
   if (addr) addr.textContent = d.property.address || d.property.apn || '—';
   if (sub) sub.textContent = [normalizeCity(d.property.city), d.property.apn].filter(Boolean).join(' · ');
   if (val) val.textContent = fmtCurrency(computeAppraisal(d).totalAssessed);
+  if (label) label.textContent = 'Total Assessed';
 }
 
 // Manual "Save as WIP": the only thing (besides Finalize) that writes the
@@ -210,20 +184,34 @@ async function switchToTab(key) {
   const target = workspace.tabs.find((t) => t.key === key);
   if (!target) return;
   snapshotActiveTab();
-  if (target.data && target.data.property) {
+  if (target.portfolio) {
     state.id = target.id ?? null;
-    state.data = normalizeParcel(target.data);
-    migrateSubjectImage(state.data);
+    applyPortfolio(normalizePortfolio(target.portfolio));
+    state.dirty = !!target.dirty;
+  } else if (target.data && target.data.property) {
+    state.id = target.id ?? null;
+    applyPortfolio(normalizePortfolio(target.data));
     state.dirty = !!target.dirty;
   } else if (target.id !== null) {
     try { await loadAppraisal(target.id); }
     catch (e) { toast(`Open failed: ${e.message}`, true); return; }
   }
   target.data = state.data;
+  target.portfolio = portfolioPayload();
   workspace.activeKey = key;
   renderTabs();
-  renderForm(); renderReport(); refreshTopBar();
+  renderForm(); renderReport(); refreshTopBar(); renderParcelStrip();
   scheduleAutosave();
+}
+
+// Find an open tab for the given APN (saved or unsaved), normalizing both sides
+// to a trimmed string so number/string mismatches don't slip past. Returns the
+// tab or null. Used by the open paths to focus an existing tab instead of
+// spawning a duplicate for the same parcel.
+function findTabByApn(apn) {
+  const a = String(apn ?? '').trim();
+  if (!a) return null;
+  return workspace.tabs.find((t) => String(t.apn ?? '').trim() === a) || null;
 }
 
 // Close a tab. No server write on close: an unsaved (never-WIP-saved) tab with
@@ -240,17 +228,20 @@ async function closeTabFn(key) {
   snapshotActiveTab();
   closeTab(key);
   const next = activeTab();
-  if (next && next.data && next.data.property) {
+  if (next && next.portfolio) {
     state.id = next.id ?? null;
-    state.data = normalizeParcel(next.data);
-    migrateSubjectImage(state.data);
+    applyPortfolio(normalizePortfolio(next.portfolio));
+    state.dirty = !!next.dirty;
+  } else if (next && next.data && next.data.property) {
+    state.id = next.id ?? null;
+    applyPortfolio(normalizePortfolio(next.data));
     state.dirty = !!next.dirty;
   } else if (next && next.id !== null) {
     try { await loadAppraisal(next.id); } catch (e) { toast(`Open failed: ${e.message}`, true); return; }
   } else {
     newAppraisal();
   }
-  renderTabs(); renderForm(); renderReport(); refreshTopBar();
+  renderTabs(); renderForm(); renderReport(); refreshTopBar(); renderParcelStrip();
   scheduleAutosave();
 }
 
@@ -270,12 +261,66 @@ function goMain() {
   showLanding();
 }
 
+// --- navigation history (Back button) ----------------------------------------
+// A stack of previously-visited views so a "← Back" button returns to the page
+// the user was on before the current one (e.g. appraisal → WIP Archive → Back
+// → the same appraisal). Each top-level view calls enterView() at its start to
+// record itself; goBack() pops the stack and restores the prior view. The open
+// workspace tabs + working data are preserved across all of this (no reload).
+let currentView = { name: 'landing', args: [] };
+const navHistory = [];
+let restoringView = false;
+
+// Record a view transition: push the current view onto the history stack (so
+// Back can return to it) and mark the new view as current. Skips the push while
+// restoring (so goBack doesn't re-push the view it is returning to).
+function enterView(name, args = []) {
+  if (!restoringView) navHistory.push(currentView);
+  currentView = { name, args };
+}
+
+// Return to the previously-visited view. With an empty history (e.g. the app
+// booted straight into an appraisal) fall back to the landing page.
+function goBack() {
+  if (navHistory.length === 0) { showLanding(); return; }
+  const prev = navHistory.pop();
+  currentView = prev;
+  restoringView = true;
+  try { restoreView(prev); } finally { restoringView = false; }
+}
+
+// Re-enter a view from the history stack.
+function restoreView(v) {
+  switch (v.name) {
+    case 'list': showList(); break;
+    case 'appraisal': {
+      // The appraisal view is stateful (renders whichever tab is active). Build
+      // the view, then switch to the tab that was active when the user left, so
+      // Back returns to the exact tab — even if a different tab was opened in
+      // the meantime (appraisal A → archive → appraisal B → Back → Back → A).
+      showAppraisal();
+      const key = v.args[0];
+      if (key && key !== workspace.activeKey) {
+        switchToTab(key);
+        currentView = { name: 'appraisal', args: [key] };
+      }
+      break;
+    }
+    case 'workqueue': showWorkQueue(v.args[0]); break;
+    case 'pin': showPinPage(v.args[0]); break;
+    case 'archive': showArchive(v.args[0]); break;
+    case 'archiveDetail': openArchiveDetail(v.args[0]); break;
+    default: showLanding(); break;
+  }
+}
+
 // --- landing page (workflow selection) ---------------------------------------
 // The workflow-selection page: pick a workflow (new appraisal, the transfer or
 // appeal work queue, or continue a saved one). The APN/Address search and the
 // Effective/Report dates now live on the appraisal's Cover tab.
 
 async function showLanding() {
+  enterView('landing');
   const main = document.getElementById('main');
   let recent = [];
   try { recent = await api.listAppraisals(); } catch { /* offline data */ }
@@ -336,10 +381,9 @@ async function showLanding() {
       .map((r) => ({ kind: 'appraisal', id: r.id, apn: r.apn, address: r.address, city: r.city }));
     const transSugg = (Array.isArray(transRows) ? transRows : [])
       .map((r) => ({ kind: 'transfer', ...r }));
-    // County parcels surface PINs with no appraisal/transfer yet; dedupe by APN.
-    const takenApns = new Set([...appSugg, ...transSugg].map((r) => String(r.apn || '').trim()));
+    // County parcels shown alongside appraisals/transfer comps so a PIN that
+    // already has an appraisal still surfaces its raw parcel record.
     const parcelSugg = (Array.isArray(parcelRows) ? parcelRows : [])
-      .filter((r) => !takenApns.has(String(r.apn || '').trim()))
       .map((r) => ({ kind: 'parcel', ...r }));
     renderResults([...appSugg, ...transSugg, ...parcelSugg].sort(byBook).slice(0, 20));
   };
@@ -409,6 +453,7 @@ async function showLanding() {
 // --- list view ----------------------------------------------------------------
 
 async function showList() {
+  enterView('list');
   const main = document.getElementById('main');
   setTopBarLanding(false);
   main.replaceChildren(el('div', { class: 'list-empty' }, 'Loading…'));
@@ -690,6 +735,7 @@ function wqCompare(a, b, col) {
 }
 
 async function showWorkQueue(type) {
+  enterView('workqueue', [type]);
   const main = document.getElementById('main');
   setTopBarLanding(false);
   const meta = WORK_QUEUE_META[type] || WORK_QUEUE_META.transfers;
@@ -738,7 +784,7 @@ async function showWorkQueue(type) {
               return el('label', {}, cb, el('span', {}, wqLabel(c)));
             })),
         ),
-        el('button', { class: 'btn', onclick: showLanding }, '← Main'),
+        el('button', { class: 'btn', onclick: goBack }, '← Back'),
       ),
     ),
     el('div', { class: 'wq-filter' },
@@ -814,50 +860,129 @@ async function showWorkQueue(type) {
         };
         return th;
       }))),
-      el('tbody', {}, shown.map((r) => el('tr', { class: 'clickable', onclick: () => openFromWorkQueue(type, r) },
+      el('tbody', {}, shown.map((r) => el('tr', { class: 'clickable', onclick: () => openFromWorkQueue(type, r, allRows) },
         cols.map((c) => el('td', { class: WQ_NUM_COLS.has(c) ? 'num' : '' }, wqCell(c, r[c])))))),
     ));
   };
   render();
 }
 
-// Open a new appraisal pre-filled from a work-queue row. Maps the common
-// "to be worked" columns (PIN, DocNumber, DocDate, price, ratio, class,
-// address, characteristics) onto the appraisal; the case type follows the
-// queue (transfer vs appeal).
-function openFromWorkQueue(type, r) {
-  const meta = WORK_QUEUE_META[type] || WORK_QUEUE_META.transfers;
-  newAppraisal();
-  const d = state.data;
+// Map a work-queue row's fields onto a parcel's appraisal data.
+// `main` = true for the main subject (gets the document-level price);
+// associated parcels get their own characteristics but no price (the
+// Consid is the total for the whole document).
+function mapWorkQueueRow(d, r, { main = true } = {}) {
   const p = d.property;
-  p.caseType = meta.caseType;
   if (r.PIN) p.apn = r.PIN;
   if (r.DocNumber) p.transferDocumentNumber = r.DocNumber;
   if (r.DocDate) p.effectiveDate = r.DocDate;
-  const price = Number(r.Consid ?? r.StatedSalePrice);
-  if (!Number.isNaN(price)) p.salePrice = price;
+  if (main) {
+    const price = Number(r.Consid ?? r.StatedSalePrice);
+    if (!Number.isNaN(price)) p.salePrice = price;
+  }
   if (r.LocalRatioCd) p.ratioCode = r.LocalRatioCd;
   if (r.ClassCdDescr) d.improvements.primary.type = r.ClassCdDescr;
   if (r.Address) p.address = titleCase(r.Address);
   if (r.City) p.city = normalizeCity(r.City);
-  // Property characteristics (when the queue file carries the columns) into
-  // the Property Summary's Building / Land groups.
   const b = d.improvements.primary;
   if (r.YrBuilt) b.yearBuilt = Number(r.YrBuilt) || 0;
   if (r.Quality) b.quality = r.Quality;
   if (r.Condition) b.condition = r.Condition;
   if (r.BuildingSf) {
     b.grossFloorArea = Number(r.BuildingSf) || 0;
-    // Transfers carry no leasable area; default it to the building area.
     if (!b.nla) b.nla = b.grossFloorArea;
   }
   if (r.Acreage) d.land.acres = Number(r.Acreage) || 0;
   if (r.SquareFeet) d.land.siteAreaSqFt = Number(r.SquareFeet) || 0;
+}
+
+// Open a new appraisal pre-filled from a work-queue row. Maps the common
+// "to be worked" columns (PIN, DocNumber, DocDate, price, ratio, class,
+// address, characteristics) onto the appraisal; the case type follows the
+// queue (transfer vs appeal).
+//
+// Multi-parcel: when the row's PINsInMult > 1 and a DocNumber is present,
+// all sibling rows sharing the same DocNumber are auto-loaded as associated
+// parcels in the portfolio. The clicked row becomes the main subject.
+function openFromWorkQueue(type, r, allRows) {
+  const meta = WORK_QUEUE_META[type] || WORK_QUEUE_META.transfers;
+  // Preserve the current tab's in-progress data before resetting state (matches
+  // openNew) so re-opening a row never silently discards an open appraisal.
+  snapshotActiveTab();
+  // If this APN is already open in a tab, focus it instead of creating a
+  // duplicate. Unsaved tabs aren't deduped by id (addTab), so we dedupe by APN
+  // here — clicking the same work-queue row twice must not spawn two tabs.
+  const existing = findTabByApn(r.PIN);
+  if (existing) { switchToTab(existing.key); return; }
+  newAppraisal();
+  const d = state.data;
+  d.property.caseType = meta.caseType;
+  mapWorkQueueRow(d, r, { main: true });
+
+  // Multi-parcel detection: PINsInMult > 1 + DocNumber → load all siblings.
+  const pinCount = Number(r.PINsInMult) || 0;
+  const docNum = r.DocNumber || '';
+  if (pinCount > 1 && docNum && Array.isArray(allRows)) {
+    const siblings = allRows.filter(
+      (row) => row.DocNumber === docNum && row.PIN !== r.PIN
+    );
+    for (const sib of siblings) {
+      const parcel = createEmptyParcel(sib.PIN || '');
+      mapWorkQueueRow(parcel, sib, { main: false });
+      state.portfolio.parcels.push(parcel);
+    }
+    // Switch to portfolio view so the combined summary is immediately visible.
+    if (state.portfolio.parcels.length > 1) {
+      setViewMode('portfolio');
+    }
+  }
+
   state.dirty = true;
-  addTab({ id: state.id, apn: p.apn, address: d.property.address, dirty: true });
+  addTab({ id: state.id, apn: d.property.apn, address: d.property.address, dirty: true });
   showAppraisal();
   renderTabs();
+  renderParcelStrip();
   scheduleAutosave();
+  // Fetch coordinates for all parcels (async, non-blocking) so the portfolio
+  // report can show intersections for parcels without a street address.
+  fetchParcelCoordinates();
+}
+
+// Fetch lat/lng for each parcel in the portfolio from the parcel-data API and
+// store them on the property. For parcels without a street address, also call
+// the reverse-geocode endpoint to get the nearest intersection. Non-blocking:
+// the report re-renders when done.
+async function fetchParcelCoordinates() {
+  const parcels = state.portfolio.parcels;
+  const missing = parcels.filter((p) => p.property?.apn && !p.property?.lat);
+  if (missing.length === 0) return;
+  await Promise.allSettled(missing.map(async (p) => {
+    try {
+      const pd = await api.getParcelData(p.property.apn);
+      if (pd?.lat && pd?.lng) {
+        p.property.lat = Number(pd.lat);
+        p.property.lng = Number(pd.lng);
+        if (!p.property.address && pd.address) p.property.address = titleCase(pd.address);
+      }
+    } catch { /* parcel not in index — skip */ }
+  }));
+  // For parcels that still have no address, fetch the nearest intersection.
+  const noAddr = parcels.filter((p) => {
+    const a = p.property?.address;
+    return (!a || a === '- No Situs -') && p.property?.lat && p.property?.lng;
+  });
+  if (noAddr.length > 0) {
+    await Promise.allSettled(noAddr.map(async (p) => {
+      try {
+        const city = p.property.city ? `&city=${encodeURIComponent(p.property.city)}` : '';
+        const res = await fetch(`/api/reverse-geocode?lat=${p.property.lat}&lng=${p.property.lng}${city}`).then((r) => r.json());
+        if (res.intersection) p.property.intersection = res.intersection;
+        else if (res.address) p.property.intersection = res.address;
+      } catch { /* geocode failed — keep coordinate fallback */ }
+    }));
+  }
+  // Re-render the report so the updated coordinates/addresses/intersections are visible.
+  renderReport();
 }
 
 // Populate the Property Summary + transfer fields from a transfer comp
@@ -890,6 +1015,15 @@ function applyTransferCompFields(d, r) {
 // building type. Bucket rows carry no address/characteristics columns, so
 // the Property Summary is enriched from the transfer comp store by APN.
 async function openTransfer(r) {
+  const apn = String(r.apn || '').trim();
+  if (apn) {
+    const openTab = findTabByApn(apn);
+    if (openTab) {
+      if (!document.getElementById('report-root')) showAppraisal();
+      switchToTab(openTab.key);
+      return;
+    }
+  }
   newAppraisal();
   const d = state.data;
   const p = d.property;
@@ -899,7 +1033,6 @@ async function openTransfer(r) {
   p.salePrice = r.consid || 0;
   p.ratioCode = r.ratioCd || '';
   d.improvements.primary.type = r.classDescr || '';
-  const apn = String(r.apn || '').trim();
   if (apn) {
     try {
       const matches = await api.searchTransferComps(apn);
@@ -949,6 +1082,9 @@ function transferDesc(r) {
 // transfer's property characteristics.
 async function openTransferComp(r) {
   const apn = String(r.apn || '').trim();
+  // Focus an already-open tab for this APN instead of spawning a duplicate.
+  const openTab = findTabByApn(apn);
+  if (openTab) { switchToTab(openTab.key); return; }
   const existing = apn.length > 0
     ? apnAppraisals.find((a) => String(a.apn || '').trim() === apn)
     : null;
@@ -996,7 +1132,7 @@ function apnSearchBox() {
           : (r.address || '')),
       r.kind === 'transfer' ? el('span', { class: 's-src' }, 'Transfer')
         : r.kind === 'parcel' ? el('span', { class: 's-src' }, 'Parcel')
-          : null,
+          : el('span', { class: 's-src' }, 'Appraisal'),
     )));
   };
 
@@ -1032,11 +1168,9 @@ function apnSearchBox() {
         .sort(byBook)
         .slice(0, 10)
         .map((r) => ({ kind: 'transfer', ...r }));
-      // County parcel records — surfaces PINs that have no appraisal or
-      // transfer comp yet. Deduped against the APNs above.
-      const takenApns = new Set([...appSugg, ...transSugg].map((r) => String(r.apn || '').trim()));
+      // County parcel records — shown alongside appraisals/transfer comps so a
+      // PIN that already has an appraisal still surfaces its raw parcel record.
       const parcelSugg = (Array.isArray(parcelRows) ? parcelRows : [])
-        .filter((r) => !takenApns.has(String(r.apn || '').trim()))
         .slice(0, 10)
         .map((r) => ({ kind: 'parcel', ...r }));
       apnSugg = [...appSugg, ...transSugg, ...parcelSugg].sort(byBook).slice(0, 20);
@@ -1074,8 +1208,8 @@ function stagingToolbar() {
     ),
     el('div', { class: 'st-right' },
       el('button', { class: 'st-btn', title: 'Download this appraisal as a JSON file', onclick: exportWip }, '⬇ Save to PC'),
-      el('button', { class: 'st-btn finalize', title: 'Save this appraisal and archive it as a permanent sales comp', onclick: onFinalize }, '✓ Finalize & Save to Archive'),
-      el('button', { class: 'st-btn', title: 'Browse archived (finalized) appraisals', onclick: showArchive }, 'View Archive'),
+      el('button', { class: 'st-btn', title: 'Print the report', onclick: () => window.print() }, 'Print'),
+      el('span', { class: 'st-sep' }),
       btn('−', 'Zoom out', () => zoomBy(-0.1)),
       pct,
       btn('+', 'Zoom in', () => zoomBy(0.1)),
@@ -1093,7 +1227,7 @@ async function onFinalize() {
     const id = await saveCurrent();
     const t = activeTab();
     if (t) { t.id = id; t.dirty = false; }
-    const res = await api.finalize(id, state.data);
+    const res = await api.finalize(id, portfolioPayload());
     if (res.deduplicated) {
       toast('Already archived — identical content (duplicate).');
     } else {
@@ -1111,7 +1245,10 @@ async function onFinalize() {
 // appraisals table) and Final (finalized appraisals, the permanent comp store).
 let archiveMode = 'wip';   // 'wip' | 'final'
 
-async function showArchive() {
+async function showArchive(mode) {
+  enterView('archive', [mode || archiveMode]);
+  if (mode) archiveMode = mode;
+  setTopBarLanding(false);
   const main = document.getElementById('main');
   main.replaceChildren(el('div', { class: 'list-empty' }, 'Loading…'));
   await renderArchive();
@@ -1195,6 +1332,7 @@ async function renderArchive() {
 
 // Read-only detail panel for a single archived comp.
 function openArchiveDetail(r) {
+  enterView('archiveDetail', [r]);
   const main = document.getElementById('main');
   const field = (label, value) => el('div', { class: 'arch-field' },
     el('div', { class: 'arch-label' }, label),
@@ -1202,7 +1340,7 @@ function openArchiveDetail(r) {
   main.replaceChildren(
     el('div', { class: 'list-view archive-detail' },
       el('div', { class: 'list-head' },
-        el('button', { class: 'btn', onclick: showArchive }, '← Archive'),
+        el('button', { class: 'btn', onclick: goBack }, '← Back'),
         el('h2', {}, r.apn || 'Archived Comp'),
       ),
       el('div', { class: 'arch-grid' },
@@ -1467,33 +1605,17 @@ function pinBuildings(parcel) {
 }
 
 // Where the PIN page's back button returns to. Set to 'appraisal' when the
-// PIN page is opened from a report (View Parcel); otherwise the back button
-// goes to the main landing page.
-let pinReturn = 'landing';
-
 // Open the county parcel page for the current report's APN. The working
-// appraisal is preserved, so the PIN page's back button returns here.
+// appraisal is preserved, so the PIN page's Back button (navigation history)
+// returns here.
 function viewParcelFromReport() {
   const apn = String(state.data?.property?.apn || '').trim();
   if (!apn) { toast('No APN on this appraisal yet', true); return; }
-  showPinPage(apn, 'appraisal');
+  showPinPage(apn);
 }
 
-// PIN page back button: return to the report when we came from one,
-// otherwise to the main landing page.
-function backFromPin() {
-  if (pinReturn === 'appraisal' && state.data && state.data.property) {
-    pinReturn = 'landing';
-    showAppraisal();
-    renderTabs();
-    return;
-  }
-  pinReturn = 'landing';
-  showLanding();
-}
-
-async function showPinPage(apn, returnTo = 'landing') {
-  pinReturn = returnTo;
+async function showPinPage(apn) {
+  enterView('pin', [apn]);
   const main = document.getElementById('main');
   setTopBarLanding(false);
   main.replaceChildren(el('div', { class: 'list-empty' }, 'Loading…'));
@@ -1508,7 +1630,7 @@ async function showPinPage(apn, returnTo = 'landing') {
   const view = el('div', { class: 'list-view pin-view' },
     el('div', { class: 'list-head' },
       el('div', { class: 'pin-head-left' },
-        el('button', { class: 'btn', title: pinReturn === 'appraisal' ? 'Back to report' : 'Back to main', onclick: backFromPin }, '←'),
+        el('button', { class: 'btn', title: 'Back to the previous page', onclick: goBack }, '←'),
         el('h2', {}, apn),
         el('span', { class: 'pin-sub' }, [parcel?.address, normalizeCity(parcel?.city), parcel?.class].filter(Boolean).join(' · ')),
       ),
@@ -1664,6 +1786,9 @@ function applyParcelFields(d, p) {
 }
 
 async function openAppraisalFromParcel(apn, caseType = 'transfer') {
+  // Focus an already-open tab for this APN instead of spawning a duplicate.
+  const openTab = findTabByApn(apn);
+  if (openTab) { switchToTab(openTab.key); return; }
   snapshotActiveTab();   // preserve the active tab's edits before resetting state
   newAppraisal();
   const d = state.data;
@@ -1682,10 +1807,14 @@ async function openAppraisalFromParcel(apn, caseType = 'transfer') {
 }
 
 function showAppraisal() {
+  // Capture the active tab key so Back can return to the same tab (the
+  // appraisal view is stateful — it renders whichever tab is active).
+  enterView('appraisal', [workspace.activeKey]);
   const main = document.getElementById('main');
   setTopBarLanding(false);
   const left = el('div', { class: 'pane pane-left' },
     el('div', { id: 'tab-strip', class: 'tab-strip' }),
+    el('div', { id: 'parcel-strip', class: 'parcel-strip' }),
     el('div', { id: 'form-root', class: 'form-root', style: 'flex:1 1 auto;min-height:0;display:flex;flex-direction:column' }),
   );
   const handle = el('div', { class: 'split-handle' });
@@ -1719,6 +1848,51 @@ function showAppraisal() {
   renderReport();
   refreshTopBar();
   renderTabs();
+  renderParcelStrip();
+  // For multi-parcel portfolios, fetch coordinates + intersections (async).
+  if (state.portfolio.parcels.length > 1) fetchParcelCoordinates();
+}
+
+// --- multi-parcel strip (which parcel within the active appraisal) ------------
+// Sits below the workspace tab strip. "Combined Portfolio Summary" appears only
+// when there are multiple parcels; each parcel gets a tab (with a remove ×).
+// The active tab is the portfolio summary (viewMode==='portfolio') or the
+// active parcel index.
+function renderParcelStrip() {
+  const root = document.getElementById('parcel-strip');
+  if (!root) return;
+  const parcels = state.portfolio.parcels;
+  const activeIdx = activeParcelIndex();
+  const nodes = [];
+  if (isPortfolio()) {
+    nodes.push(el('button', {
+      class: `parcel-tab ${state.viewMode === 'portfolio' ? 'active' : ''}`,
+      title: 'Combined portfolio summary',
+      onclick: () => { setViewMode('portfolio'); renderParcelStrip(); renderForm(); renderReport(); refreshTopBar(); },
+    }, 'Combined Portfolio Summary'));
+  }
+  parcels.forEach((p, i) => {
+    const label = i === 0 ? 'Main Subject' : 'Associated';
+    const apn = p.property?.apn || '—';
+    nodes.push(el('div', {
+      class: `parcel-tab ${state.viewMode === 'parcel' && i === activeIdx ? 'active' : ''}`,
+      title: `${label} · APN ${apn}`,
+    },
+      el('button', {
+        class: 'parcel-tab-label',
+        onclick: () => { selectParcel(i); renderParcelStrip(); renderForm(); renderReport(); refreshTopBar(); },
+      }, `${i + 1} · ${label}${apn !== '—' ? ` · ${apn}` : ''}`),
+      parcels.length > 1 ? el('button', {
+        class: 'parcel-tab-close', title: 'Remove parcel',
+        onclick: (e) => { e.stopPropagation(); removeParcel(i); renderParcelStrip(); renderForm(); renderReport(); refreshTopBar(); },
+      }, '×') : null,
+    ));
+  });
+  nodes.push(el('button', {
+    class: 'parcel-tab-add', title: 'Add an associated parcel to this appraisal',
+    onclick: () => { addParcel(''); renderParcelStrip(); renderForm(); renderReport(); refreshTopBar(); },
+  }, '+ Add Parcel'));
+  root.replaceChildren(...nodes);
 }
 
 // --- boot ----------------------------------------------------------------------
@@ -1758,16 +1932,16 @@ async function boot() {
 window.addEventListener('appraisal:view-parcel', viewParcelFromReport);
 // Form edits update the top-bar headline + total assessed.
 window.addEventListener('appraisal:changed', refreshTopBar);
+// Portfolio ops (add/remove/select parcel, switch view) from the form's summary
+// panel refresh the parcel strip + top bar (form.js re-renders form + report).
+window.addEventListener('portfolio:changed', () => { renderParcelStrip(); refreshTopBar(); });
 // Keep the active workspace tab's label + dirty marker in sync.
 window.addEventListener('appraisal:changed', updateTabStrip);
 // Debounced autosave of the working appraisal (WIP) on every form edit.
 window.addEventListener('appraisal:changed', scheduleAutosave);
 
-// Close the WIP dropdown and the work-queue Columns menu when clicking
-// anywhere outside them (bound once).
+// Close the work-queue Columns menu when clicking anywhere outside it (bound once).
 document.addEventListener('click', () => {
-  const m = document.getElementById('wip-menu');
-  if (m) m.classList.remove('open');
   const c = document.getElementById('wq-cols');
   if (c) c.classList.remove('open');
 });
