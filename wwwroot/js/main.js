@@ -65,7 +65,8 @@ function renderTopBar() {
       ),
       el('span', { class: 'tb-sep' }),
       el('div', { class: 'tb-group' },
-        el('button', { class: 'btn', id: 'btn-back', title: 'Back to the previous page', onclick: goBack }, '← Back'),
+        el('button', { class: 'btn', id: 'btn-report', title: 'Return to the report builder (your active appraisal)', onclick: goReport }, '📄 Report'),
+        el('button', { class: 'btn', id: 'btn-home', title: 'Return to the landing page', onclick: goMain }, '🏠 Home'),
       ),
       ...(RULE2_ENABLED ? [
         el('div', { class: 'tb-group' },
@@ -93,7 +94,10 @@ function renderTopBar() {
 // Hide the top-bar action buttons (and the appraisal headline/total) on the
 // landing page, where they don't apply. Toggled by the view functions.
 function setTopBarLanding(on) {
-  document.getElementById('topbar')?.classList.toggle('tb-landing', on);
+  const bar = document.getElementById('topbar');
+  if (!bar) return;
+  bar.classList.toggle('tb-landing', on);
+  bar.classList.remove('tb-appraisal');
 }
 
 // Keep the top-bar headline + total assessed in sync with the form.
@@ -259,6 +263,14 @@ function openNew() {
 // workspace tabs and working data are preserved, so nothing is lost.
 function goMain() {
   showLanding();
+}
+
+// Return to the report builder showing the active appraisal tab. If no report
+// is open, fall back to the landing page. This is the "get back to my report"
+// button in the top bar (replaces the old ambiguous "← Back").
+function goReport() {
+  if (activeTab()) showAppraisal();
+  else showLanding();
 }
 
 // --- navigation history (Back button) ----------------------------------------
@@ -1244,6 +1256,34 @@ async function onFinalize() {
 // Two archives: WIP (manually saved work-in-progress appraisals, from the
 // appraisals table) and Final (finalized appraisals, the permanent comp store).
 let archiveMode = 'wip';   // 'wip' | 'final'
+let archiveCase = 'all';   // 'all' | 'transfer' | 'appeal' | 'stipulation' | 'general'
+
+// Case-type sections shown in both archives. 'all' is the default; the four
+// case types match the cover's case-type selector.
+const ARCHIVE_CASES = [
+  ['all', 'All'],
+  ['transfer', 'Transfers'],
+  ['appeal', 'Appeals'],
+  ['stipulation', 'Stipulations'],
+  ['general', 'General'],
+];
+
+// Normalize a row's case type to one of the section keys (missing/unknown →
+// 'transfer', matching the model default).
+function archiveCaseOf(r) {
+  const ct = String(r.caseType || '').toLowerCase();
+  return ['transfer', 'appeal', 'stipulation', 'general'].includes(ct) ? ct : 'transfer';
+}
+
+// Case-type section tabs for the archive header.
+function archiveCaseTabs() {
+  return el('div', { class: 'archive-case-tabs' },
+    ARCHIVE_CASES.map(([value, label]) => el('button', {
+      class: `btn ${archiveCase === value ? 'primary' : ''}`,
+      onclick: () => { archiveCase = value; renderArchive(); },
+    }, label)),
+  );
+}
 
 async function showArchive(mode) {
   enterView('archive', [mode || archiveMode]);
@@ -1270,19 +1310,23 @@ async function renderArchive() {
     catch (e) { main.replaceChildren(el('div', { class: 'list-empty' }, `Failed to load: ${e.message}`)); return; }
     rows = (Array.isArray(rows) ? rows : [])
       .sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
+    const shown = archiveCase === 'all' ? rows : rows.filter((r) => archiveCaseOf(r) === archiveCase);
     main.replaceChildren(
       el('div', { class: 'list-view' },
         el('div', { class: 'list-head' },
           el('h2', {}, 'Archive'),
           toggle,
-          el('span', { class: 'r2-sub' }, `${rows.length} work-in-progress appraisal${rows.length === 1 ? '' : 's'}`),
+          archiveCaseTabs(),
+          el('span', { class: 'r2-sub' }, `${shown.length} work-in-progress appraisal${shown.length === 1 ? '' : 's'}`),
         ),
         el('table', { class: 'list-table' },
           el('thead', {}, el('tr', {}, ['APN', 'Address', 'City', 'Report Date', 'Final Value', 'Updated', ''].map((h) => el('th', {}, h)))),
           el('tbody', {},
-            rows.length === 0
-              ? el('tr', {}, el('td', { colspan: 7 }, 'No WIP appraisals yet. Use “Save as WIP” to keep a working copy on the server.'))
-              : rows.map((r) => el('tr', { class: 'clickable', onclick: () => openById(r.id) },
+            shown.length === 0
+              ? el('tr', {}, el('td', { colspan: 7 }, rows.length === 0
+                  ? 'No WIP appraisals yet. Use “Save as WIP” to keep a working copy on the server.'
+                  : 'No WIP appraisals in this section.'))
+              : shown.map((r) => el('tr', { class: 'clickable', onclick: () => openById(r.id) },
                   el('td', {}, r.apn || '—'),
                   el('td', {}, r.address || '—'),
                   el('td', {}, normalizeCity(r.city) || '—'),
@@ -1303,19 +1347,23 @@ async function renderArchive() {
   try { rows = await api.getPermanentComps(); }
   catch (e) { main.replaceChildren(el('div', { class: 'list-empty' }, `Failed to load: ${e.message}`)); return; }
   rows = Array.isArray(rows) ? rows : [];
+  const shown = archiveCase === 'all' ? rows : rows.filter((r) => archiveCaseOf(r) === archiveCase);
   main.replaceChildren(
     el('div', { class: 'list-view' },
       el('div', { class: 'list-head' },
         el('h2', {}, 'Archive'),
         toggle,
-        el('span', { class: 'r2-sub' }, `${rows.length} finalized appraisal${rows.length === 1 ? '' : 's'} · permanent comps`),
+        archiveCaseTabs(),
+        el('span', { class: 'r2-sub' }, `${shown.length} finalized appraisal${shown.length === 1 ? '' : 's'} · permanent comps`),
       ),
       el('table', { class: 'list-table' },
         el('thead', {}, el('tr', {}, ['APN', 'Address', 'City', 'Sale Date', 'Price', 'Bldg SF', ''].map((h) => el('th', {}, h)))),
         el('tbody', {},
-          rows.length === 0
-            ? el('tr', {}, el('td', { colspan: 7 }, 'No appraisals archived yet. Finalize an appraisal to add it here.'))
-            : rows.map((r) => el('tr', { class: 'clickable', onclick: () => openArchiveDetail(r) },
+          shown.length === 0
+            ? el('tr', {}, el('td', { colspan: 7 }, rows.length === 0
+                ? 'No appraisals archived yet. Finalize an appraisal to add it here.'
+                : 'No finalized appraisals in this section.'))
+            : shown.map((r) => el('tr', { class: 'clickable', onclick: () => openArchiveDetail(r) },
                 el('td', {}, r.apn || '—'),
                 el('td', {}, r.address || '—'),
                 el('td', {}, normalizeCity(r.city) || '—'),
@@ -1812,6 +1860,7 @@ function showAppraisal() {
   enterView('appraisal', [workspace.activeKey]);
   const main = document.getElementById('main');
   setTopBarLanding(false);
+  document.getElementById('topbar').classList.add('tb-appraisal');
   const left = el('div', { class: 'pane pane-left' },
     el('div', { id: 'tab-strip', class: 'tab-strip' }),
     el('div', { id: 'parcel-strip', class: 'parcel-strip' }),

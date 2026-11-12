@@ -511,7 +511,6 @@ public static class Rule2
             ["siteSqFt"] = r.SiteSqFt,
             ["clearHeight"] = 0,
             ["zoning"] = "",
-            ["isArmsLength"] = true,
             ["sourceReport"] = "",
             ["propertyType"] = r.ClassDesc,
             ["subjectApn"] = "",

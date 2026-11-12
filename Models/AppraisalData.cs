@@ -3,6 +3,7 @@
 // `appraisals` table (JSON blob in the `data` column). Mirrors the JS
 // createEmptyParcel / normalizeParcel in wwwroot/js/core.js 1:1.
 // ---------------------------------------------------------------------------
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 
 namespace RivCo.Models;
@@ -136,5 +137,61 @@ public class AppraisalData
                 : d)
             .Concat(provided.Skip(defaults.Count))
             .ToList();
+    }
+}
+
+/// <summary>
+/// Multi-parcel portfolio: one appraisal spans multiple parcels, combined into
+/// a single report with aggregate totals. Mirrors the JS <c>state.portfolio</c>
+/// in wwwroot/js/core.js. <c>Parcels[0]</c> is the main subject.
+/// </summary>
+public class Portfolio
+{
+    [JsonPropertyName("parcels")]
+    public List<AppraisalData> Parcels { get; set; } = new();
+
+    [JsonPropertyName("activeParcelIndex")]
+    public int ActiveParcelIndex { get; set; }
+
+    [JsonPropertyName("viewMode")]
+    public string ViewMode { get; set; } = "parcel";
+
+    /// <summary>The main subject parcel (first parcel).</summary>
+    public AppraisalData MainSubject =>
+        Parcels.Count > 0 ? Parcels[0] : AppraisalData.CreateEmpty("");
+
+    /// <summary>True when the appraisal spans more than one parcel.</summary>
+    public bool IsPortfolio => Parcels.Count > 1;
+
+    /// <summary>
+    /// Parses a stored/request JSON node into a normalized Portfolio. Accepts
+    /// either a portfolio ({ parcels }) or a legacy single-parcel doc
+    /// ({ property }), mirroring the JS normalizePortfolio backward-compat.
+    /// </summary>
+    public static Portfolio Parse(JsonNode? node)
+    {
+        if (node is JsonObject obj && obj["parcels"] is JsonArray arr)
+        {
+            var parcels = new List<AppraisalData>();
+            foreach (var p in arr)
+                parcels.Add(AppraisalData.Normalize(AppraisalJson.DeserializeNode(p)));
+            if (parcels.Count == 0) parcels.Add(AppraisalData.CreateEmpty(""));
+            int idx = obj["activeParcelIndex"]?.GetValue<int>() ?? 0;
+            if (idx < 0 || idx >= parcels.Count) idx = 0;
+            var vm = obj["viewMode"]?.GetValue<string>() ?? "parcel";
+            return new Portfolio
+            {
+                Parcels = parcels,
+                ActiveParcelIndex = idx,
+                ViewMode = vm == "portfolio" ? "portfolio" : "parcel",
+            };
+        }
+        // Legacy single-parcel doc (or null) → 1-parcel portfolio.
+        return new Portfolio
+        {
+            Parcels = new List<AppraisalData> { AppraisalData.Normalize(AppraisalJson.DeserializeNode(node)) },
+            ActiveParcelIndex = 0,
+            ViewMode = "parcel",
+        };
     }
 }

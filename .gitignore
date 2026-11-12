@@ -8,6 +8,7 @@ data/
 share/
 storage/
 _edgeprof/
+_edge_profile/
 *.zip
 
 # Debug / scratch files

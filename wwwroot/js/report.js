@@ -5,7 +5,7 @@ import {
   state, computeAppraisal, hasCostData, hasIncomeData,
   fmtCurrency, fmtCurrencyRounded, fmtNumber, fmtPct, fmtAcresNum, titleCase, normalizeCity, fmtDate, todayISO,
   generateReconciliationNarrative, resolveSubjectImageUrl, resolveSubjectImageUrls,
-  resolveCoverPhotoUrl, resolveCompPhotoUrls,
+  resolveSubjectPhotoUrls, resolveCoverPhotoUrl, resolveCompPhotoUrls,
   computePortfolioAggregate, reportMode,
 } from './core.js';
 
@@ -535,14 +535,22 @@ function salesSheet(d, comp) {
       row('Property Type', imp.type, comps.map((c) => c.propertyType || '—')),
       row('Location', p.address, comps.map((c) => c.address || '—')),
       row('City', normalizeCity(p.city), comps.map((c) => normalizeCity(c.city) || '—')),
+      // Year built: prefer the comp's stored value (transfer comps carry it);
+      // otherwise derive it from the comp's age.
+      row('Year Built', (imp.yearBuilt || 0) > 0 ? String(imp.yearBuilt) : '—', comps.map((c) => {
+        const yb = (c.yearBuilt || 0) > 0 ? c.yearBuilt : (c.age > 0 ? new Date().getFullYear() - c.age : 0);
+        return yb > 0 ? String(yb) : '—';
+      })),
       row('Age', compAge, comps.map((c) => (c.age > 0 ? String(c.age) : '—'))),
       row('Quality', imp.quality, comps.map((c) => c.quality || '—')),
       row('Condition', imp.condition, comps.map((c) => c.condition || '—')),
       row('Land Area (Acres)', subjectAcres > 0 ? subjectAcres.toFixed(2) : '—', comps.map((c) => (c.landArea > 0 ? c.landArea.toFixed(2) : '—'))),
       row('Building Area (SF)', subjectSF > 0 ? fmtNumber(subjectSF) : '—', comps.map((c) => (c.buildingArea > 0 ? fmtNumber(c.buildingArea) : '—'))),
       row('Land to Bldg. Ratio', subjectRatio > 0 ? subjectRatio.toFixed(2) : '—', compValues.map((v) => (v.ratio > 0 ? v.ratio.toFixed(2) : '—'))),
-      row('Transfer Date', '', comps.map((c) => (c.saleDate ? fmtDate(c.saleDate) : '—'))),
-      row('Cash Eq. Sale Price', '', comps.map((c) => (c.price > 0 ? fmtCurrency(c.price) : '—'))),
+      // Transfers: the subject's own transfer date (effective date, matching
+      // the cover's "Date of Transfer") and cash-equivalent sale price.
+      row('Transfer Date', (p.caseType || 'transfer') === 'transfer' && p.effectiveDate ? fmtDate(p.effectiveDate) : '', comps.map((c) => (c.saleDate ? fmtDate(c.saleDate) : '—'))),
+      row('Cash Eq. Sale Price', (p.caseType || 'transfer') === 'transfer' && (p.salePrice || 0) > 0 ? fmtCurrency(p.salePrice) : '', comps.map((c) => (c.price > 0 ? fmtCurrency(c.price) : '—'))),
       row('UNADJUSTED VALUE INDICATORS', null, [], { section: true }),
       row('Unadjusted Price / SF', '', compValues.map((v) => (v.unadjSF > 0 ? v.unadjSF.toFixed(2) : '—'))),
       row('Market Conditions', '', comps.map((c) => pct(c.adjMarketConditions))),
@@ -676,10 +684,9 @@ function subjectPropertySheet(d) {
     covField('Zoning', l.zoning),
   ].filter(Boolean)));
 
-  // Subject Photos — the single cover photo (GIS map by default); grows to fill
-  // the page (like the cover).
-  const subjUrl = resolveCoverPhotoUrl(d);
-  const photos = subjUrl ? [subjUrl] : [];
+  // Subject Photos — the subject's uploaded photos only (never the GIS
+  // satellite, which belongs to the cover); grows to fill the page.
+  const photos = resolveSubjectPhotoUrls(d);
   const photosBox = covBox('Subject Photos',
     photos.length > 0
       ? el('div', { class: `cov-photos${photos.length === 1 ? ' single' : ''}` },
@@ -695,10 +702,10 @@ function subjectPropertySheet(d) {
   ];
 }
 
-// One page per selected comp, in the same unified navy-box style as the cover
+// One page per comp, in the same unified navy-box style as the cover
 // and subject sheet. The photos box grows to fill the leftover vertical space.
 function compDetailSheets(d) {
-  const comps = (d.sales.comparables || []).filter((c) => c.selected !== false);
+  const comps = d.sales.comparables || [];
   if (comps.length === 0) return [];
   return comps.map((c, i) => {
     const unadjSF = c.buildingArea > 0 ? c.price / c.buildingArea : 0;
@@ -754,7 +761,7 @@ function compDetailSheets(d) {
 
 function mapSheet(d) {
   const p = d.property;
-  const comps = (d.sales.comparables || []).filter((c) => c.selected !== false);
+  const comps = d.sales.comparables || [];
   const subjUrl = resolveSubjectImageUrl(d);
   const img = subjUrl
     ? el('div', { class: 'img-cell' }, el('img', { src: subjUrl, alt: 'Map' }))

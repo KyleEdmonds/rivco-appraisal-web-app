@@ -47,9 +47,6 @@ public class CompRecord
     [JsonPropertyName("zoning")]
     public string Zoning { get; set; } = "";
 
-    [JsonPropertyName("isArmsLength")]
-    public bool IsArmsLength { get; set; } = true;
-
     [JsonPropertyName("sourceReport")]
     public string SourceReport { get; set; } = "";
 
@@ -69,6 +66,12 @@ public class CompRecord
 
     [JsonPropertyName("effectiveDate")]
     public string EffectiveDate { get; set; } = "";
+
+    // Case type of the source appraisal ("transfer" | "appeal" | "stipulation"
+    // | "general"); used to section the final archive. Defaults to "transfer"
+    // for rows archived before this field existed.
+    [JsonPropertyName("caseType")]
+    public string CaseType { get; set; } = "transfer";
 
     // --- the 12 grid adjustments (zero for repository comps) ---
     [JsonPropertyName("adjBuildingSize")]

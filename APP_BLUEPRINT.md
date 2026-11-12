@@ -109,23 +109,48 @@ Single stylesheet, all theming through `:root` custom properties:
 - **Palette**: slate/charcoal enterprise base (`--navy #1e293b`, `--bg #f1f5f9`),
   white surfaces (`--surface #ffffff`), gold accent (`--gold #b8860b`),
   hairline borders (`--line #e2e8f0`), danger `#dc2626`.
-- **Premium SaaS accents (implemented)**: emerald token family
-  (`--accent #10b981`, `--accent-dark #059669`, `--accent-deep #047857`,
-  `--accent-bright #34d399` on dark surfaces, `--accent-soft-green`),
-  indigo secondary (`--indigo #4f46e5`), and a shared `--focus-ring`
-  (`0 0 0 3px rgba(16,185,129,.22)`). Emerald drives all financial
-  metrics: top-bar total, final-value field, report-sheet `.final-value`
-  callout, emphasized computed chips, and sales-grid hover/bold rows.
-- **Typography**: dense 9–12px base, `font-feature-settings: 'tnum'` for
-  tabular numerals; final appraised values rendered large + `font-weight: 700`
-  (17px in-form, 26px on the report sheet).
-- **Layout**: CSS Grid for property metadata (year built, SF, lot size) with
-  responsive collapse breakpoints (1100/860/560px); flex multi-column
-  containers for the sales-comparison grid.
-- **Inputs**: explicit `:hover` / `:focus` states with `transition: all 0.2s
-  ease-in-out` (emerald border + `--focus-ring` box-shadow) on every text
-  input, select, number wrapper, weight input, and repo filter.
-- **Roadmap**: dark-mode theme via `:root` variable overrides + theme picker.
+- **Premium SaaS accents (implemented)**: full emerald scale
+  (`--em-50 … --em-800`) and indigo scale (`--ind-50 … --ind-700`);
+  `--accent` = emerald 500, `--indigo` = indigo 600. Emerald drives all
+  financial metrics (top-bar total, final-value field, report-sheet
+  `.final-value` callout, emphasized chips, sales-grid hover/subject rows);
+  indigo is the secondary accent (hover borders, segmented-control hovers,
+  cost-toggle hover).
+- **Design tokens (expanded)**: radius scale (`--r-sm 4 / --r-md 6 /
+  --r-lg 10` — UI only; report sheets stay sharp-cornered for print),
+  elevation (`--shadow-sm/md/lg`), spacing scale (`--sp-1 … --sp-6`),
+  type scale (`--fs-xs … --fs-3xl`), motion (`--ease`, `--dur 0.18s`),
+  and dual focus rings (`--focus-ring` emerald, `--focus-ring-indigo`).
+- **Form grid & air**: uniform CSS Grid field clusters (`.field-grid`
+  gap 14px 18px, `.ps-group-grid` auto-fit minmax(160px,1fr)); section
+  bodies padded 16px 18px; tab content 14px 16px with 14px section gaps;
+  inputs standardized at 34px height with 10px horizontal padding.
+- **Typography & labels**: labels are crisp 10px / `font-weight: 600` /
+  uppercase / 0.06em tracking in `--muted` so they never blend into data;
+  financial aggregates and final appraised numbers are bold
+  (`font-weight: 700–800`): schedule values 14px/700, weight values
+  14px/700, sales-correlated total 22px/800, in-form final value 18px/700,
+  report-sheet `.final-value` 28px/800 centered in a soft emerald feature
+  card, `.value-callout` 28px/800.
+- **Interactive feedback**: every `<input>`, `<select>`, number wrapper,
+  weight input, repo filter, date field, and button transitions
+  (`var(--dur) var(--ease)`) — indigo border on hover
+  (`--hover-border`), emerald border + soft two-layer blur focus ring
+  (`--focus-ring`) on focus. Buttons/tabs/segmented controls carry
+  matching micro-transitions (lift + shadow on landing cards, inset ring
+  on active tab, indigo tint on segmented hovers).
+- **Print/PDF engine** (`@media print`): all interactive UI stripped
+  (`display: none !important` — top bar, tabs, control bar, repo filters,
+  buttons, image actions, overlays); inputs collapse to static text
+  underlined by `border-bottom: 1px solid #e4e4e7`; strict
+  `page-break-inside: avoid` on sections, comp grids, value cards,
+  signatures, schedules, and photos; `page-break-after: avoid` keeps
+  headings attached to content; `thead` repeats across pages;
+  `orphans/widows: 3` on narrative text; exact 8.5×11" sheets, one per
+  page, `print-color-adjust: exact`. Verified: headless `--print-to-pdf`
+  produces a 5-page PDF (one clean sheet per page, no splits).
+- **Roadmap**: dark-mode theme via `:root` variable overrides + theme
+  picker.
 
 ---
 
@@ -156,6 +181,21 @@ Single stylesheet, all theming through `:root` custom properties:
       (emerald final-value field, sales grid, report preview). Landing view
       is blank only in headless (IndexedDB `open` never resolves without a
       real profile) — renders normally in a real browser.
+- [x] Task 4 — SaaS Premium UI/UX overhaul (all 5 form tabs): expanded
+      design tokens (emerald/indigo scales, radius/elevation/spacing/type
+      scales, dual focus rings, motion tokens); uniform 34px inputs in
+      14/18px-gap CSS Grid clusters with 16px section padding; crisp
+      10px/600 uppercase labels; bold financial aggregates (700–800);
+      indigo-hover → emerald-focus micro-interactions on every input,
+      button, tab, and segmented control; rounded section cards with
+      elevation; emerald tab-completion checks.
+- [x] Task 5 — High-tier print/PDF styling: `@media print` strips all
+      interactive UI, converts inputs to static text underlined by
+      `1px solid #e4e4e7`, enforces `page-break-inside: avoid` on
+      sections/grids/signatures, keeps headings with content, repeats
+      `thead`, and centers the Final Reconciled Value in a 28px/800 soft
+      emerald feature card. Verified via headless `--print-to-pdf`:
+      5-page PDF, one clean sheet per page.
 - [ ] Comp similarity scoring (rank repository by similarity to subject)
 - [ ] Validation layer over the appraisal/comp model (mirrors Zod schemas)
 - [ ] Dark-mode theme via `:root` variable overrides + theme picker

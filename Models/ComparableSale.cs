@@ -89,12 +89,6 @@ public class ComparableSale
     [JsonPropertyName("adjConditionOfSale")]
     public double AdjConditionOfSale { get; set; }
 
-    [JsonPropertyName("selected")]
-    public bool Selected { get; set; } = true;
-
-    [JsonPropertyName("isArmsLength")]
-    public bool IsArmsLength { get; set; } = true;
-
     /// <summary>Comp photos, keyed by the comp's own APN (independent of the subject's).</summary>
     [JsonPropertyName("photos")]
     public List<PhotoRef> Photos { get; set; } = new();

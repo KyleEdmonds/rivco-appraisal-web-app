@@ -4,9 +4,10 @@
 // ---------------------------------------------------------------------------
 import {
   state, markDirty, computeAppraisal, hasCostData, hasIncomeData,
-  fmtCurrency, fmtCurrencyRounded, fmtNumber, fmtPct, fmtDate, normalizeCity, titleCase, api,
+  fmtCurrency, fmtCurrencyRounded, fmtNumber, fmtPct, fmtAcresNum, fmtDate, fmtDateMDY, normalizeCity, titleCase, api,
   getLocalComps, clearLocalComps, importLocalComps, scheduleAutosave,
   resolveSubjectImageUrl, resolveCoverPhotoUrl, resolvePhotoUrl, resolveCompPhotoUrl, rankCompsBySimilarity,
+  isPortfolio, activeParcelIndex, reportMode, selectParcel, setViewMode, addParcel, removeParcel, resetActiveParcel, computePortfolioAggregate,
 } from './core.js';
 import { renderReport, scrollToSection } from './report.js';
 
@@ -435,6 +436,86 @@ function coverPhotoPanel() {
   return wrap;
 }
 
+// Multi-photo panel for the subject (Subject tab). Manages
+// property.subjectPhotos — the uploaded photos shown in the report's
+// "Subject Photos" box. Uploads only (no GIS satellite — that belongs to the
+// cover). Supports multi-select upload and drag & drop; each photo can be
+// removed individually.
+function subjectPhotosPanel() {
+  const d = state.data;
+  const p = d.property;
+  const apn = String(p.apn || '').trim();
+  if (!Array.isArray(p.subjectPhotos)) p.subjectPhotos = [];
+
+  const wrap = el('div', { class: 'img-panel' });
+  const grid = el('div', { class: 'img-panel-grid' });
+  const modeBtns = el('div', { class: 'img-panel-modes' });
+
+  const reRender = () => {
+    grid.replaceChildren();
+    p.subjectPhotos.forEach((ph, i) => {
+      const url = resolvePhotoUrl(d, ph);
+      const cell = el('div', { class: 'img-thumb' });
+      cell.append(url
+        ? el('img', { src: url, alt: `Subject photo ${i + 1}` })
+        : el('div', { class: 'img-thumb-ph' }, 'Photo'));
+      const rm = el('button', { class: 'btn tiny danger img-thumb-rm' }, 'Remove');
+      rm.onclick = () => { p.subjectPhotos.splice(i, 1); markDirty(); refreshComputed(); reRender(); };
+      cell.append(rm);
+      grid.append(cell);
+    });
+    const add = el('div', { class: 'img-thumb img-thumb-add' },
+      el('div', { class: 'img-thumb-add-inner' },
+        el('div', { class: 'img-thumb-add-plus' }, '+'),
+        el('div', { class: 'img-thumb-add-label' }, 'Add photo'),
+      ),
+    );
+    add.onclick = () => fileInput.click();
+    grid.append(add);
+  };
+
+  const addPhoto = (photo) => {
+    p.subjectPhotos.push(photo);
+    markDirty(); refreshComputed(); reRender();
+  };
+
+  const uploadFile = (f) => {
+    if (!f || !f.type || !f.type.startsWith('image/')) return;
+    if (!apn) { toast('Set an APN first', true); return; }
+    const fd = new FormData();
+    fd.append('file', f);
+    fetch(`/api/parcel-photos/${encodeURIComponent(apn)}`, { method: 'POST', body: fd })
+      .then(r => r.json())
+      .then(res => { if (res.saved && res.saved[0]) addPhoto({ source: 'upload', file: res.saved[0] }); })
+      .catch(() => toast('Upload failed', true));
+  };
+
+  const fileInput = el('input', { type: 'file', accept: 'image/*', multiple: true });
+  fileInput.style.display = 'none';
+  const uploadBtn = el('button', { class: 'btn tiny img-mode-btn' }, '📷 Upload');
+  uploadBtn.onclick = () => fileInput.click();
+  fileInput.onchange = () => {
+    for (const f of fileInput.files) uploadFile(f);
+    fileInput.value = '';
+  };
+
+  wrap.ondragover = (e) => { e.preventDefault(); wrap.classList.add('drag'); };
+  wrap.ondragleave = () => wrap.classList.remove('drag');
+  wrap.ondrop = (e) => {
+    e.preventDefault(); wrap.classList.remove('drag');
+    for (const f of e.dataTransfer.files) uploadFile(f);
+  };
+
+  modeBtns.append(uploadBtn);
+  wrap.append(
+    el('div', { class: 'img-panel-head' }, el('span', { class: 'img-panel-title' }, 'Subject Photos'), modeBtns),
+    grid,
+    fileInput,
+  );
+  reRender();
+  return wrap;
+}
+
 function subjectTab() {
   const d = state.data;
   const imp = d.improvements.primary;
@@ -516,7 +597,10 @@ function subjectTab() {
       )
     : null;
 
-  return [summary, obSection];
+  // Subject Photos — uploaded photos shown in the report's Subject Photos box.
+  const photosSection = section('Subject Photos', null, null, subjectPhotosPanel());
+
+  return [summary, photosSection, obSection];
 }
 
 // --- Sales tab (SalesTab + SalesGrid + CompForm) -------------------------------
@@ -525,12 +609,11 @@ function newComp() {
   return {
     id: `comp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
     parcel: '', address: '', city: '', saleDate: '', price: 0,
-    age: 0, quality: '', condition: '', landArea: 0, buildingArea: 0,
+    age: 0, yearBuilt: 0, quality: '', condition: '', landArea: 0, buildingArea: 0,
     clearHeight: 0, zoning: '', propertyType: '',
     adjBuildingSize: 0, adjLocation: 0, adjCornerSite: 0, adjAge: 0,
     adjQuality: 0, adjCondition: 0, adjTenantsUse: 0, adjOccupancy: 0,
     adjLandBldgRatio: 0, adjFreeway: 0, adjMarketConditions: 0, adjConditionOfSale: 0,
-    selected: true, isArmsLength: true,
     photos: [],
   };
 }
@@ -541,11 +624,11 @@ function toComparableSale(record) {
   Object.assign(c, {
     parcel: record.apn || '', address: record.address || '', city: record.city || '',
     saleDate: record.saleDate || '', price: record.price || 0,
-    age: record.age || 0, quality: record.quality || '', condition: record.condition || '',
+    age: record.age || 0, yearBuilt: record.yearBuilt || 0,
+    quality: record.quality || '', condition: record.condition || '',
     landArea: record.landArea || 0, buildingArea: record.buildingArea || 0,
     clearHeight: record.clearHeight || 0, zoning: record.zoning || '',
     propertyType: record.propertyType || '',
-    isArmsLength: record.isArmsLength !== false,
   });
   for (const [key] of ADJ_FIELDS) c[key] = record[key] || 0;
   return c;
@@ -605,6 +688,9 @@ async function loadRepo() {
 }
 
 const repoPSF = (r) => (r.buildingArea > 0 ? (r.price || 0) / r.buildingArea : 0);
+// Year built: prefer the stored value (transfer comps carry it); otherwise
+// derive it from the comp's age. 0 = unknown.
+const repoYearBuilt = (r) => (r.yearBuilt > 0 ? r.yearBuilt : (r.age > 0 ? new Date().getFullYear() - r.age : 0));
 
 function repoSortVal(r, key) {
   switch (key) {
@@ -617,6 +703,7 @@ function repoSortVal(r, key) {
     case 'buildingArea': return Number(r.buildingArea) || 0;
     case 'landArea': return Number(r.landArea) || 0;
     case 'age': return Number(r.age) || 0;
+    case 'yearBuilt': return Number(r.yearBuilt) || 0;
     case 'quality': return String(r.quality || '');
     case 'propertyType': return String(r.propertyType || '');
     case 'similarity': return r.__sim ?? 0;
@@ -656,7 +743,10 @@ function renderRepoResults() {
   if (!box) return;
   const q = repoQuery.trim().toLowerCase();
   const city = repoCity.trim().toLowerCase();
-  const type = repoType.trim().toLowerCase();
+  // Type filter defaults to the subject's property type so comp results match
+  // the subject; an explicit dropdown selection overrides it.
+  const subjectType = (state.data.improvements?.primary?.type || '').trim();
+  const type = (repoType || subjectType).trim().toLowerCase();
   const loPSF = repoMinPSF === '' ? null : Number(repoMinPSF);
   const hiPSF = repoMaxPSF === '' ? null : Number(repoMaxPSF);
   const loDate = parseRepoDate(repoMinDate);
@@ -667,7 +757,8 @@ function renderRepoResults() {
   let rows = repoRecords.filter((r) => {
     if (q && !(String(r.apn || '').toLowerCase().includes(q) || String(r.address || '').toLowerCase().includes(q))) return false;
     if (city && String(r.city || '').toLowerCase() !== city) return false;
-    if (type && String(r.propertyType || '').toLowerCase() !== type) return false;
+    // Keep comps with no recorded type; drop only those with a different type.
+    if (type && r.propertyType && String(r.propertyType).trim().toLowerCase() !== type) return false;
     const psf = repoPSF(r);
     if (loPSF != null && psf < loPSF) return false;
     if (hiPSF != null && psf > hiPSF) return false;
@@ -704,17 +795,19 @@ function renderRepoResults() {
     return;
   }
 
-  // Seven columns (city is folded under the address; land/age/type live in the
+  // Nine columns (city is folded under the address; land/age live in the
   // comp form). Fixed widths + a flexible address column keep the table within
   // the pane width so it never scrolls horizontally.
   const COLS = [
-    ['similarity', 'Sim', 44],
+    ['similarity', 'Sim', 58],
     ['apn', 'APN', 92],
     ['address', 'Address', null],
-    ['saleDate', 'Sale', 74],
+    ['propertyType', 'Type', 110],
+    ['saleDate', 'Date', 84],
     ['price', 'Price', 84],
     ['psf', '$/SF', 58],
-    ['buildingArea', 'Bldg SF', 72],
+    ['buildingArea', 'Bldg SF', 80],
+    ['yearBuilt', 'Yr Bld', 64],
   ];
 
   const header = el('tr', {},
@@ -724,7 +817,7 @@ function renderRepoResults() {
         el('span', { class: 'sort-ind' }, repoSortKey === key ? (repoSortDir === 'asc' ? '▲' : '▼') : '↕'),
       );
       if (width) th.style.width = `${width}px`;
-      if (key === 'price' || key === 'psf' || key === 'buildingArea' || key === 'similarity') th.style.textAlign = 'right';
+      if (key === 'price' || key === 'psf' || key === 'buildingArea' || key === 'yearBuilt' || key === 'similarity') th.style.textAlign = 'right';
       return th;
     }),
     el('th', { style: 'width:64px' }, ''),
@@ -743,10 +836,14 @@ function renderRepoResults() {
       el('div', { class: 'addr-main', title: titleCase(p.address) || '' }, titleCase(p.address) || '—'),
       el('div', { class: 'addr-sub' }, normalizeCity(p.city) || ''),
     ),
-    el('td', {}, '—'),
+    el('td', {}, imp.type || '—'),
+    // Transfers: the subject's transfer date (effective date, matching the
+    // report's "Date of Transfer") + transfer price in the Date/Price cells.
+    el('td', {}, (p.caseType || 'transfer') === 'transfer' && p.effectiveDate ? fmtDateMDY(p.effectiveDate) : '—'),
     el('td', { class: 'num' }, (p.salePrice || 0) > 0 ? fmtCurrency(p.salePrice) : '—'),
     el('td', { class: 'num' }, subjectPSF > 0 ? subjectPSF.toFixed(2) : '—'),
     el('td', { class: 'num' }, (imp.grossFloorArea || 0) > 0 ? fmtNumber(imp.grossFloorArea) : '—'),
+    el('td', { class: 'num' }, (imp.yearBuilt || 0) > 0 ? String(imp.yearBuilt) : '—'),
     el('td', {}, el('span', { class: 'subject-badge' }, 'SUBJECT')),
   ) : null;
 
@@ -759,10 +856,12 @@ function renderRepoResults() {
         el('div', { class: 'addr-main', title: titleCase(r.address) || '' }, titleCase(r.address) || '—'),
         el('div', { class: 'addr-sub' }, normalizeCity(r.city) || ''),
       ),
-      el('td', {}, r.saleDate ? fmtDate(r.saleDate) : '—'),
+      el('td', {}, r.propertyType || '—'),
+      el('td', {}, r.saleDate ? fmtDateMDY(r.saleDate) : '—'),
       el('td', { class: 'num' }, r.price > 0 ? fmtCurrency(r.price) : '—'),
       el('td', { class: 'num' }, repoPSF(r) > 0 ? repoPSF(r).toFixed(2) : '—'),
       el('td', { class: 'num' }, r.buildingArea > 0 ? fmtNumber(r.buildingArea) : '—'),
+      el('td', { class: 'num' }, repoYearBuilt(r) > 0 ? String(repoYearBuilt(r)) : '—'),
       el('td', {}, isSelected
         ? el('button', { class: 'btn tiny danger', onclick: () => removeRepoComp(r.apn) }, 'Remove')
         : el('button', { class: 'btn tiny', onclick: () => addRepoComp(r) }, '+ Add')),
@@ -775,8 +874,6 @@ function renderRepoResults() {
 
 function addRepoComp(r) {
   const comp = toComparableSale(r);
-  const subjectType = state.data.improvements.primary.type;
-  if (subjectType && r.propertyType && r.propertyType !== subjectType) comp.selected = false;
   state.data.sales.comparables = [...state.data.sales.comparables, comp];
   activeCompIdx = state.data.sales.comparables.length - 1;
   markDirty();
@@ -954,9 +1051,12 @@ function compForm(comp, compIndex) {
         el('div', { style: 'grid-column: span 2' }, compTextField('Address', comp, 'address')),
         el('div', { class: 'field' }, el('label', {}, 'Sale Date'),
           (() => {
-            const input = el('input', { class: 'inp', type: 'date' });
-            input.value = comp.saleDate || '';
-            input.addEventListener('input', () => compSet(comp, { saleDate: input.value }));
+            const input = el('input', { class: 'inp', type: 'text', placeholder: 'MM/DD/YYYY' });
+            input.value = comp.saleDate ? fmtDateMDY(comp.saleDate) : '';
+            input.addEventListener('input', () => {
+              const iso = parseRepoDate(input.value);
+              compSet(comp, { saleDate: iso });
+            });
             return input;
           })()),
         compNumField('Price ($)', comp, 'price', { prefix: '$' }),
@@ -979,16 +1079,6 @@ function compForm(comp, compIndex) {
         ADJ_FIELDS.map(([key, label]) => compNumField(label, comp, key, { suffix: '%' })),
       ),
     ),
-    section('Flags', null, null,
-      el('div', { class: 'flag-row' },
-        el('label', {},
-          el('input', { type: 'checkbox', onchange: (e) => set({ selected: e.target.checked }) }),
-          'Selected'),
-        el('label', {},
-          el('input', { type: 'checkbox', onchange: (e) => set({ isArmsLength: e.target.checked }) }),
-          "Arm's Length (Adj.)"),
-      ),
-    ),
   );
 }
 
@@ -998,11 +1088,7 @@ function salesTab() {
   const s = d.sales;
 
   // Section heading + toolbar + repository panel
-  const permCount = repoRecords.filter((r) => r.origin === 'permanent').length;
-  const transCount = repoRecords.filter((r) => r.origin === 'transfer').length;
-  const repo = section('Sales Comparison', null,
-    el('span', { class: 'desc', style: 'color:#94a3b8' },
-      `${s.comparables.length} of ${repoRecords.length} comps · ${permCount} permanent · ${transCount} transfer`),
+  const repo = section('Sales Comparison', null, null,
     el('div', { class: 'repo-panel', style: 'border:0' },
       el('div', { class: 'repo-filters' },
         el('div', { class: 'repo-filter repo-filter-search' },
@@ -1015,11 +1101,36 @@ function salesTab() {
         ),
         el('div', { class: 'repo-filter' },
           el('label', {}, 'City'),
-          el('input', { value: repoCity, placeholder: 'Any', oninput: (e) => { repoCity = e.target.value; renderRepoResults(); } }),
+          (() => {
+            const sel = el('select', { class: 'inp' });
+            sel.append(el('option', { value: '' }, 'Any'));
+            const cities = [...new Set(repoRecords.map((r) => String(r.city || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+            if (repoCity && !cities.includes(repoCity)) cities.unshift(repoCity);
+            for (const c of cities) {
+              const opt = el('option', { value: c }, c);
+              if (c === repoCity) opt.selected = true;
+              sel.append(opt);
+            }
+            sel.addEventListener('change', () => { repoCity = sel.value; renderRepoResults(); });
+            return sel;
+          })(),
         ),
         el('div', { class: 'repo-filter' },
           el('label', {}, 'Type'),
-          el('input', { value: repoType, placeholder: 'Any', oninput: (e) => { repoType = e.target.value; renderRepoResults(); } }),
+          (() => {
+            const sel = el('select', { class: 'inp' });
+            sel.append(el('option', { value: '' }, 'Any'));
+            const types = [...new Set(repoRecords.map((r) => String(r.propertyType || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+            const eff = (repoType || (state.data.improvements?.primary?.type || '')).trim();
+            if (eff && !types.includes(eff)) types.unshift(eff);
+            for (const t of types) {
+              const opt = el('option', { value: t }, t);
+              if (t === eff) opt.selected = true;
+              sel.append(opt);
+            }
+            sel.addEventListener('change', () => { repoType = sel.value; renderRepoResults(); });
+            return sel;
+          })(),
         ),
         el('div', { class: 'repo-filter' },
           el('label', {}, 'Min $/SF'),
@@ -1559,9 +1670,71 @@ const TAB_BUILDERS = {
   cost: costTab,
 };
 
+// --- portfolio summary panel (input-side view for the "Combined Portfolio
+// Summary" tab) ---------------------------------------------------------------
+// Surfaces the live aggregate and lets the appraiser manage associated parcels.
+function staticChip(label, value, emphasis = false) {
+  return el('div', { class: `chip ${emphasis ? 'emphasis' : ''}` },
+    el('span', { class: 'chip-label' }, label),
+    el('span', { class: 'chip-value' }, value),
+  );
+}
+
+// Re-render the form + report and ask main.js to refresh the parcel strip +
+// top bar (those live in main.js, so we signal via an event).
+function afterPortfolioChange() {
+  renderForm();
+  renderReport();
+  document.dispatchEvent(new CustomEvent('portfolio:changed'));
+}
+
+function portfolioSummaryPanel() {
+  const parcels = state.portfolio.parcels;
+  const agg = computePortfolioAggregate(parcels);
+  const chips = el('div', { class: 'chip-grid' },
+    staticChip('Total Gross Floor Area', `${fmtNumber(agg.totalSqft)} sq ft`),
+    staticChip('Total Net Leasable Area', `${fmtNumber(agg.totalNla)} sq ft`),
+    staticChip('Total Site Area', `${fmtNumber(agg.totalSiteSqFt)} sq ft`),
+    staticChip('Total Acreage', fmtAcresNum(agg.totalAcres)),
+    staticChip('Total Land Value', fmtCurrency(agg.totalLandValue)),
+    staticChip('Total Final Value', fmtCurrency(agg.totalFinalValue), true),
+  );
+  const list = el('div', { class: 'parcel-list' },
+    parcels.map((p, i) => el('div', { class: 'parcel-row' },
+      el('button', {
+        class: 'parcel-row-main',
+        onclick: () => { selectParcel(i); afterPortfolioChange(); },
+      },
+        el('div', { class: 'parcel-row-title' }, `${i === 0 ? 'Main Subject' : 'Associated'} · APN ${p.property?.apn || '—'}`),
+        el('div', { class: 'parcel-row-sub' }, p.property?.address || '—'),
+      ),
+      parcels.length > 1 ? el('button', {
+        class: 'parcel-row-remove', title: 'Remove parcel',
+        onclick: () => { removeParcel(i); afterPortfolioChange(); },
+      }, '×') : null,
+    )),
+  );
+  return [
+    section('Combined Portfolio Summary', 'Aggregate across all associated parcels', null, chips),
+    section('Associated Parcels', 'Select a parcel to edit its characteristics',
+      el('button', { class: 'btn tiny', onclick: () => { addParcel(''); afterPortfolioChange(); } }, '+ Add Parcel'),
+      list),
+  ];
+}
+
 export function renderForm() {
   const root = document.getElementById('form-root');
   if (!root) return;
+  // Portfolio view: show the combined summary panel instead of the parcel form.
+  if (reportMode() === 'portfolio') {
+    const body = el('div', { class: 'tab-content' });
+    for (const node of portfolioSummaryPanel()) {
+      if (node) body.append(node);
+    }
+    root.replaceChildren(body);
+    document.dispatchEvent(new CustomEvent('form:rendered'));
+    return;
+  }
   // The Cost tab is only reachable while the cost approach is enabled; if it
   // gets disabled elsewhere, fall back so we never sit on a hidden tab.
   if (activeTab === 'cost' && !hasCostData(state.data)) activeTab = 'reconciliation';

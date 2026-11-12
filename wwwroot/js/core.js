@@ -82,10 +82,8 @@ const ADJ_FIELDS = [
 
 export function computeSales(data) {
   const comps = data.sales.comparables || [];
-  const selected = comps.filter((c) => c.selected);
-  const pool = data.sales.method === 'selected' && selected.length > 0 ? selected : comps;
   const subjectSF = safe(data.improvements.primary.grossFloorArea);
-  const compValues = pool.map((c) => {
+  const compValues = comps.map((c) => {
     const unadjSF = c.buildingArea > 0 ? safe(c.price / c.buildingArea) : 0;
     const netAdjPct = safe(ADJ_FIELDS.reduce((s, f) => s + safe(c[f]), 0));
     const adjSF = safe(unadjSF * (1 + netAdjPct / 100));
@@ -221,6 +219,44 @@ export function computeAppraisal(data) {
   }
 }
 
+// --- portfolio aggregation (pure, defensive — isolates per-parcel failures) ---
+// Sums site/GFA/land/cost/income/sales/weighted/final across the parcels of a
+// multi-parcel appraisal. Per-parcel compute is isolated in try/catch so a
+// corrupt parcel cannot throw and crash the whole portfolio rollup.
+export function computePortfolioAggregate(parcels) {
+  const list = Array.isArray(parcels) ? parcels : [];
+  let totalSiteSqFt = 0, totalGfa = 0, totalLandValue = 0;
+  let totalCost = 0, totalIncome = 0, totalSales = 0, totalWeighted = 0, totalFinal = 0;
+  for (const parcel of list) {
+    if (!parcel) continue;
+    totalSiteSqFt += safe(parcel.land?.siteAreaSqFt);
+    totalLandValue += safe(parcel.land?.landValue);
+    const primaryGfa = safe(parcel.improvements?.primary?.grossFloorArea);
+    const outGfa = (parcel.improvements?.outbuildings ?? []).reduce((sum, o) => sum + safe(o?.grossFloorArea), 0);
+    totalGfa += safe(primaryGfa + outGfa);
+    let c;
+    try { c = computeAppraisal(parcel); } catch { c = ZERO_COMPUTED; }
+    totalCost += safe(c.cost.valueByCost);
+    totalIncome += safe(c.income.valueByIncome);
+    totalSales += safe(c.sales.valueBySales);
+    totalWeighted += safe(c.reconciliation.weightedValue);
+    totalFinal += safe(c.totalAssessed);
+  }
+  return {
+    parcelCount: list.length,
+    totalSiteSqFt: round2(totalSiteSqFt),
+    totalAcres: round2(totalSiteSqFt / SQFT_PER_ACRE),
+    totalSqft: round2(totalGfa),
+    totalNla: round2(totalGfa),
+    totalLandValue: round2(totalLandValue),
+    totalCostValue: round2(totalCost),
+    totalIncomeValue: round2(totalIncome),
+    totalSalesValue: round2(totalSales),
+    totalWeightedValue: round2(totalWeighted),
+    totalFinalValue: round2(totalFinal),
+  };
+}
+
 
 // --- formatting --------------------------------------------------------------
 
@@ -295,6 +331,16 @@ export function fmtDate(iso) {
   return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
+// Zero-padded MM/DD/YYYY (used for sale dates on the Sales tab).
+export function fmtDateMDY(iso) {
+  if (!iso) return '';
+  const m = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(String(iso));
+  if (m) return `${m[2].padStart(2, '0')}/${m[3].padStart(2, '0')}/${m[1]}`;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return String(iso);
+  return `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}/${d.getFullYear()}`;
+}
+
 export function generateReconciliationNarrative(p) {
   const parts = [];
   if (p.includeCost && p.costWeight > 0)
@@ -346,7 +392,7 @@ export function createEmptyParcel(apn) {
       rentType: 'NNN', pgiPerSf: 0, vacancyPct: 5, collectionLossPct: 5,
       operatingExpensePct: 5, capRate: 6, incomeNotes: '',
     },
-    sales: { method: 'average', remarks: '', comparables: [] },
+    sales: { remarks: '', comparables: [] },
     reconciliation: {
       costWeight: 0, incomeWeight: 25, salesWeight: 75, finalValue: 0, rationale: '',
     },
@@ -423,6 +469,22 @@ export function resolveSubjectImageUrls(data) {
   if (!p) return [];
   const photos = Array.isArray(p.subjectPhotos) ? p.subjectPhotos : [];
   return photos.map((ph) => resolvePhotoUrl(data, ph)).filter(Boolean);
+}
+
+// Resolves the subject's explicit photos (uploads only — never the GIS
+// satellite, which belongs to the cover) to displayable URLs. Combines the
+// legacy single subjectImage with the subjectPhotos list, deduped.
+// Returns [] when there are no uploaded photos.
+export function resolveSubjectPhotoUrls(data) {
+  const p = data?.property;
+  if (!p) return [];
+  const urls = [];
+  const push = (u) => { if (u && !urls.includes(u)) urls.push(u); };
+  if (p.subjectImage && p.subjectImage.source === 'upload') push(resolvePhotoUrl(data, p.subjectImage));
+  for (const ph of Array.isArray(p.subjectPhotos) ? p.subjectPhotos : []) {
+    if (ph && ph.source === 'upload') push(resolvePhotoUrl(data, ph));
+  }
+  return urls;
 }
 
 // Resolves the legacy single subjectImage reference to a displayable URL.
@@ -524,16 +586,22 @@ export const state = {
   data: createEmptyParcel(''),
   tenant: { county: '', countyName: '', officeName: '', sealUrl: '' },
   dirty: false,
+  // Multi-parcel portfolio: one appraisal spans multiple parcels. `data` is a
+  // live reference to the active parcel (portfolio.parcels[activeParcelIndex])
+  // so all existing form/report code keeps working unchanged.
+  portfolio: { parcels: [], activeParcelIndex: 0 },
+  viewMode: 'parcel', // 'parcel' | 'portfolio'
 };
+state.portfolio.parcels = [state.data];
 
 export function markDirty() { state.dirty = true; }
 
 export async function saveCurrent() {
   if (state.id === null) {
-    const { id } = await api.createAppraisal(state.data);
+    const { id } = await api.createAppraisal(portfolioPayload());
     state.id = id;
   } else {
-    await api.updateAppraisal(state.id, state.data);
+    await api.updateAppraisal(state.id, portfolioPayload());
   }
   state.dirty = false;
   return state.id;
@@ -542,15 +610,118 @@ export async function saveCurrent() {
 export async function loadAppraisal(id) {
   const { data } = await api.getAppraisal(id);
   state.id = id;
-  state.data = normalizeParcel(data);
-  migrateSubjectImage(state.data);
+  applyPortfolio(normalizePortfolio(data));
   state.dirty = false;
 }
 
 export function newAppraisal() {
   state.id = null;
-  state.data = createEmptyParcel('');
+  const parcel = createEmptyParcel('');
+  state.portfolio.parcels = [parcel];
+  state.portfolio.activeParcelIndex = 0;
+  state.viewMode = 'parcel';
+  state.data = parcel;
   state.dirty = false;
+}
+
+// --- multi-parcel portfolio (one appraisal spans multiple parcels) -----------
+// `state.data` is a live reference to the active parcel, so in-place form edits
+// (form.js resolvePath) always land on the right parcel. The existing "open
+// tabs" workspace (which appraisal) is orthogonal to this (which parcel within
+// the active appraisal).
+
+function clampIndex(i, len) {
+  if (len <= 0) return 0;
+  return Math.max(0, Math.min(i, len - 1));
+}
+
+// Re-point state.data at the active parcel (live reference, not a copy).
+function syncActiveData() {
+  state.data = state.portfolio.parcels[clampIndex(state.portfolio.activeParcelIndex, state.portfolio.parcels.length)];
+}
+
+export function isPortfolio() {
+  return state.portfolio.parcels.length > 1;
+}
+
+export function activeParcelIndex() {
+  return clampIndex(state.portfolio.activeParcelIndex, state.portfolio.parcels.length);
+}
+
+// The report mode: portfolio views only when there are multiple parcels AND the
+// user is in portfolio view mode.
+export function reportMode() {
+  return state.viewMode === 'portfolio' && isPortfolio() ? 'portfolio' : 'parcel';
+}
+
+export function selectParcel(index) {
+  state.portfolio.activeParcelIndex = clampIndex(index, state.portfolio.parcels.length);
+  state.viewMode = 'parcel';
+  syncActiveData();
+  markDirty();
+}
+
+export function setViewMode(mode) {
+  state.viewMode = mode;
+  markDirty();
+}
+
+export function addParcel(apn) {
+  state.portfolio.parcels.push(createEmptyParcel(apn ?? ''));
+  state.portfolio.activeParcelIndex = state.portfolio.parcels.length - 1;
+  state.viewMode = 'parcel';
+  syncActiveData();
+  markDirty();
+}
+
+export function removeParcel(index) {
+  if (state.portfolio.parcels.length <= 1) return; // always keep at least one
+  state.portfolio.parcels.splice(index, 1);
+  let active = state.portfolio.activeParcelIndex;
+  if (index === active) active = 0;
+  else if (index < active) active = active - 1;
+  state.portfolio.activeParcelIndex = clampIndex(active, state.portfolio.parcels.length);
+  syncActiveData();
+  markDirty();
+}
+
+export function resetActiveParcel() {
+  state.portfolio.parcels[activeParcelIndex()] = createEmptyParcel('');
+  syncActiveData();
+  markDirty();
+}
+
+// Serialize the whole portfolio for persistence (server / WIP / IndexedDB).
+export function portfolioPayload() {
+  return {
+    parcels: state.portfolio.parcels,
+    activeParcelIndex: state.portfolio.activeParcelIndex,
+    viewMode: state.viewMode,
+  };
+}
+
+// Normalize a stored doc into a portfolio. Accepts either a portfolio
+// ({ parcels }) or a legacy single-parcel doc ({ property }).
+export function normalizePortfolio(raw) {
+  if (raw && Array.isArray(raw.parcels)) {
+    const parcels = raw.parcels.map((p) => normalizeParcel(p));
+    if (parcels.length === 0) parcels.push(createEmptyParcel(''));
+    return {
+      parcels,
+      activeParcelIndex: clampIndex(raw.activeParcelIndex ?? 0, parcels.length),
+      viewMode: raw.viewMode === 'portfolio' ? 'portfolio' : 'parcel',
+    };
+  }
+  return { parcels: [normalizeParcel(raw)], activeParcelIndex: 0, viewMode: 'parcel' };
+}
+
+// Apply a normalized portfolio to state (used by load + tab switching).
+export function applyPortfolio(pf) {
+  state.portfolio.parcels = pf.parcels;
+  state.portfolio.activeParcelIndex = pf.activeParcelIndex;
+  state.viewMode = pf.viewMode;
+  syncActiveData();
+  migrateSubjectImage(state.data);
 }
 
 // --- multi-parcel workspace (open tabs) --------------------------------------
@@ -650,6 +821,7 @@ export function snapshotActiveTab() {
   const t = activeTab();
   if (!t) return;
   t.data = state.data;
+  t.portfolio = portfolioPayload();
   t.dirty = state.dirty;
   t.apn = state.data?.property?.apn || t.apn;
   t.address = state.data?.property?.address || t.address;
@@ -662,6 +834,7 @@ function workspaceSnapshot() {
     tabs: workspace.tabs.map((t) => ({
       key: t.key, id: t.id, apn: t.apn, address: t.address, dirty: t.dirty,
       data: (t.key === active?.key ? state.data : t.data) || null,
+      portfolio: (t.key === active?.key ? portfolioPayload() : t.portfolio) || null,
     })),
     activeKey: workspace.activeKey,
     savedAt: new Date().toISOString(),
@@ -689,13 +862,34 @@ export async function restoreWorkspaceLocal() {
     if (!rec || !Array.isArray(rec.tabs) || rec.tabs.length === 0) return false;
     workspace.tabs = rec.tabs.map((t) => ({
       key: t.key, id: t.id ?? null, apn: t.apn || '', address: t.address || '',
-      dirty: !!t.dirty, data: (t.data && t.data.property) ? t.data : null,
+      dirty: !!t.dirty,
+      data: (t.data && t.data.property) ? t.data : null,
+      portfolio: t.portfolio || null,
     }));
+    // Collapse duplicate APN tabs left by the old tab-dedup bug (several tabs
+    // for the same parcel). For each APN keep the tab that was active, else the
+    // first; drop the rest. Blank ("New") tabs are left untouched.
+    {
+      const byApn = new Map();
+      for (const t of workspace.tabs) {
+        const a = String(t.apn || '').trim();
+        if (!a) continue;
+        if (!byApn.has(a)) byApn.set(a, []);
+        byApn.get(a).push(t);
+      }
+      const drop = new Set();
+      for (const tabs of byApn.values()) {
+        if (tabs.length <= 1) continue;
+        const keep = tabs.find((t) => t.key === rec.activeKey) || tabs[0];
+        for (const t of tabs) if (t !== keep) drop.add(t.key);
+      }
+      if (drop.size) workspace.tabs = workspace.tabs.filter((t) => !drop.has(t.key));
+    }
     const active = workspace.tabs.find((t) => t.key === rec.activeKey) || workspace.tabs[0];
     workspace.activeKey = active.key;
     state.id = active.id ?? null;
-    state.data = active.data ? normalizeParcel(active.data) : createEmptyParcel('');
-    migrateSubjectImage(state.data);
+    // Prefer the stored portfolio; fall back to the legacy single-parcel data.
+    applyPortfolio(normalizePortfolio(active.portfolio || active.data));
     state.dirty = !!active.dirty;
     return true;
   } catch { return false; }
@@ -712,9 +906,9 @@ export async function clearLocalWorkspace() {
 export function exportWip() {
   const payload = {
     app: 'rivco-appraisal',
-    version: 1,
+    version: 2,
     exportedAt: new Date().toISOString(),
-    data: state.data,
+    data: portfolioPayload(),
   };
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -732,10 +926,14 @@ export async function importWip(file) {
   let parsed;
   try { parsed = JSON.parse(text); } catch { throw new Error('Not valid JSON'); }
   const data = parsed && typeof parsed === 'object' ? (parsed.data ?? parsed) : null;
-  if (!data || typeof data !== 'object' || !data.property) {
+  if (!data || typeof data !== 'object') {
     throw new Error('Not a valid WIP file (missing appraisal data)');
   }
-  return normalizeParcel(data);
+  // Accept either a portfolio ({ parcels }) or a legacy single-parcel ({ property }).
+  if (!Array.isArray(data.parcels) && !data.property) {
+    throw new Error('Not a valid WIP file (missing appraisal data)');
+  }
+  return normalizePortfolio(data);
 }
 
 // --- local (machine-only) comp store -----------------------------------------
@@ -801,7 +999,6 @@ const CSV_FIELD_MAP = {
   clearHeight: ['clearheight', 'clear height'],
   zoning: ['zoning'],
   propertyType: ['propertytype', 'property type', 'type'],
-  isArmsLength: ['isarmslength', 'arms length', 'arms-length'],
 };
 const CSV_NUM_FIELDS = ['price', 'age', 'landArea', 'buildingArea', 'clearHeight', ...ADJ_FIELDS];
 
@@ -824,7 +1021,6 @@ function csvRowToComp(header, row) {
     condition: get(CSV_FIELD_MAP.condition),
     zoning: get(CSV_FIELD_MAP.zoning),
     propertyType: get(CSV_FIELD_MAP.propertyType),
-    isArmsLength: true,
     sourceReport: '',
     subjectApn: '',
     photoUrl: '',
@@ -833,8 +1029,6 @@ function csvRowToComp(header, row) {
     const n = parseFloat(get(CSV_FIELD_MAP[f] ?? [f.toLowerCase()]));
     rec[f] = Number.isFinite(n) ? n : 0;
   }
-  const arms = get(CSV_FIELD_MAP.isArmsLength).toLowerCase();
-  rec.isArmsLength = !(arms === 'false' || arms === '0' || arms === 'ind' || arms === 'ind.');
   return rec;
 }
 

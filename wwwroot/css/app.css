@@ -180,8 +180,15 @@ input, select, textarea { font-family: inherit; }
 .tb-value .label { font-size: 9px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--gold-light); font-weight: 700; white-space: nowrap; }
 .tb-value .num { font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--accent-bright); letter-spacing: 0.01em; }
 .tb-group { display: flex; align-items: center; gap: 6px; }
-/* Landing page: hide the top-bar action buttons + appraisal headline/total. */
-#topbar.tb-landing .tb-right { display: none; }
+/* Landing page: hide the appraisal headline/total (they don't apply), but keep
+   the WIP / Final Archive buttons visible. */
+#topbar.tb-landing .tb-headline,
+#topbar.tb-landing .tb-value,
+#topbar.tb-landing .tb-sep,
+#topbar.tb-landing #btn-save-wip,
+#topbar.tb-landing #btn-finalize,
+#topbar.tb-landing #btn-home { display: none; }
+#topbar.tb-appraisal #btn-report { display: none; }
 
 /* --- responsive breakpoints --- */
 @media (max-width: 1399px) {
@@ -1266,7 +1273,10 @@ textarea.inp { height: auto; padding: 8px 10px; resize: vertical; line-height: 1
   padding: 5px 10px;
   border-bottom: 2px solid rgba(30, 41, 59, 0.7);
 }
-.sales-grid tr.bold-row td { font-weight: 700; background: var(--accent-soft-green); }
+/* Bold rows (NET ADJUSTMENTS / Adj. Price / SF): emphasize the data cells
+   only — the label and subject cells keep their own backgrounds. */
+.sales-grid tr.bold-row td { font-weight: 700; }
+.sales-grid tr.bold-row td:not(.row-label):not(.subject) { background: var(--accent-soft-green); }
 .sales-grid tr:hover td:not(.row-label):not(.subject) { background: var(--accent-soft-green); }
 /* Subject characteristics summary card (above the sales comparison grid). */
 .subj-summary { border: 1px solid var(--navy-light); margin-bottom: 12px; }
@@ -1312,8 +1322,6 @@ textarea.inp { height: auto; padding: 8px 10px; resize: vertical; line-height: 1
 .comp-form { border: 1px solid var(--border); border-top: 0; padding: 14px; display: flex; flex-direction: column; gap: 14px; }
 .comp-form-head { display: flex; justify-content: space-between; align-items: center; }
 .comp-form-head h3 { margin: 0; font-size: 14px; font-weight: 700; color: #334155; }
-.flag-row { display: flex; gap: 18px; }
-.flag-row label { display: flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
 
 /* --- right staging: toolbar + sheet stack --- */
 .staging-toolbar {
@@ -2133,6 +2141,10 @@ textarea.inp { height: auto; padding: 8px 10px; resize: vertical; line-height: 1
 /* Archive view: WIP / Final toggle buttons. */
 .archive-toggle { display: inline-flex; gap: 6px; }
 .archive-toggle .btn { padding: 4px 14px; font-size: 12px; font-weight: 600; }
+/* Archive view: case-type section tabs (Transfers / Appeals / Stipulations /
+   General). Same look as the WIP/Final toggle. */
+.archive-case-tabs { display: inline-flex; gap: 6px; margin-left: 12px; }
+.archive-case-tabs .btn { padding: 4px 12px; font-size: 12px; font-weight: 600; }
 .list-table {
   width: 100%;
   border-collapse: collapse;

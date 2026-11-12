@@ -43,6 +43,16 @@ public static class AppraisalJson
     public static AppraisalData DeserializeNormalized(string? json) =>
         AppraisalData.Normalize(Deserialize(json));
 
+    /// <summary>Serializes a multi-parcel portfolio to the JSON blob format.</summary>
+    public static string SerializePortfolio(Portfolio portfolio) =>
+        JsonSerializer.Serialize(portfolio, Options);
+
+    /// <summary>
+    /// Parses a JSON node into a normalized Portfolio (accepts a portfolio
+    /// { parcels } or a legacy single-parcel { property }).
+    /// </summary>
+    public static Portfolio ParsePortfolio(JsonNode? node) => Portfolio.Parse(node);
+
     /// <summary>Serializes a comp repository record.</summary>
     public static string SerializeComp(CompRecord comp) =>
         JsonSerializer.Serialize(comp, Options);
