@@ -1,5 +1,4 @@
 using Microsoft.Data.Sqlite;
-using System.Drawing;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
@@ -29,6 +28,7 @@ using (var conn = new SqliteConnection(connStr))
             address TEXT,
             city TEXT,
             report_date TEXT,
+            effective_date TEXT,
             final_value REAL,
             case_type TEXT,
             data TEXT NOT NULL,
@@ -133,6 +133,21 @@ using (var conn = new SqliteConnection(connStr))
             alt.ExecuteNonQuery();
         }
     }
+
+    // Migration: add the effective_date column to appraisals for databases
+    // created before it existed. Denormalized from the main subject so the
+    // "Save as WIP" flow can detect an existing WIP for the same APN +
+    // effective date without parsing every stored document. Idempotent.
+    using (var chk = conn.CreateCommand())
+    {
+        chk.CommandText = "SELECT COUNT(*) FROM pragma_table_info('appraisals') WHERE name = 'effective_date'";
+        if (Convert.ToInt32(chk.ExecuteScalar()) == 0)
+        {
+            using var alt = conn.CreateCommand();
+            alt.CommandText = "ALTER TABLE appraisals ADD COLUMN effective_date TEXT";
+            alt.ExecuteNonQuery();
+        }
+    }
 }
 
 SqliteConnection Open()
@@ -149,7 +164,7 @@ app.MapGet("/api/appraisals", () =>
 {
     using var conn = Open();
     using var cmd = conn.CreateCommand();
-    cmd.CommandText = "SELECT id, apn, address, city, report_date, final_value, case_type, updated_at FROM appraisals ORDER BY updated_at DESC";
+    cmd.CommandText = "SELECT id, apn, address, city, report_date, effective_date, final_value, case_type, updated_at FROM appraisals ORDER BY updated_at DESC";
     using var reader = cmd.ExecuteReader();
     var list = new List<Dictionary<string, object?>>();
     while (reader.Read())
@@ -161,9 +176,10 @@ app.MapGet("/api/appraisals", () =>
             ["address"] = reader.IsDBNull(2) ? null : reader.GetString(2),
             ["city"] = reader.IsDBNull(3) ? null : reader.GetString(3),
             ["reportDate"] = reader.IsDBNull(4) ? null : reader.GetString(4),
-            ["finalValue"] = reader.IsDBNull(5) ? null : reader.GetDouble(5),
-            ["caseType"] = reader.IsDBNull(6) ? null : reader.GetString(6),
-            ["updatedAt"] = reader.IsDBNull(7) ? null : reader.GetString(7),
+            ["effectiveDate"] = reader.IsDBNull(5) ? null : reader.GetString(5),
+            ["finalValue"] = reader.IsDBNull(6) ? null : reader.GetDouble(6),
+            ["caseType"] = reader.IsDBNull(7) ? null : reader.GetString(7),
+            ["updatedAt"] = reader.IsDBNull(8) ? null : reader.GetString(8),
         });
     }
     return Results.Ok(list);
@@ -196,19 +212,20 @@ app.MapPost("/api/appraisals", async (HttpContext ctx) =>
     var pf = AppraisalJson.ParsePortfolio(dataNode);
     var id = Guid.NewGuid().ToString("N");
     var now = DateTime.UtcNow.ToString("o");
-    var (apn, address, city, reportDate, finalValue, caseType) = ExtractSummary(pf);
+    var (apn, address, city, reportDate, effectiveDate, finalValue, caseType) = ExtractSummary(pf);
 
     using var conn = Open();
     using var cmd = conn.CreateCommand();
     cmd.CommandText = """
-        INSERT INTO appraisals (id, apn, address, city, report_date, final_value, case_type, data, created_at, updated_at)
-        VALUES ($id, $apn, $address, $city, $rd, $fv, $ct, $data, $now, $now)
+        INSERT INTO appraisals (id, apn, address, city, report_date, effective_date, final_value, case_type, data, created_at, updated_at)
+        VALUES ($id, $apn, $address, $city, $rd, $ed, $fv, $ct, $data, $now, $now)
         """;
     cmd.Parameters.AddWithValue("$id", id);
     cmd.Parameters.AddWithValue("$apn", (object?)apn ?? DBNull.Value);
     cmd.Parameters.AddWithValue("$address", (object?)address ?? DBNull.Value);
     cmd.Parameters.AddWithValue("$city", (object?)city ?? DBNull.Value);
     cmd.Parameters.AddWithValue("$rd", (object?)reportDate ?? DBNull.Value);
+    cmd.Parameters.AddWithValue("$ed", (object?)effectiveDate ?? DBNull.Value);
     cmd.Parameters.AddWithValue("$fv", (object?)finalValue ?? DBNull.Value);
     cmd.Parameters.AddWithValue("$ct", (object?)caseType ?? DBNull.Value);
     cmd.Parameters.AddWithValue("$data", AppraisalJson.SerializePortfolio(pf));
@@ -228,19 +245,20 @@ app.MapPut("/api/appraisals/{id}", async (string id, HttpContext ctx) =>
     // One row = the whole portfolio (main subject = parcels[0]).
     var pf = AppraisalJson.ParsePortfolio(dataNode);
     var now = DateTime.UtcNow.ToString("o");
-    var (apn, address, city, reportDate, finalValue, caseType) = ExtractSummary(pf);
+    var (apn, address, city, reportDate, effectiveDate, finalValue, caseType) = ExtractSummary(pf);
 
     using var conn = Open();
     using var cmd = conn.CreateCommand();
     cmd.CommandText = """
         UPDATE appraisals SET apn=$apn, address=$address, city=$city, report_date=$rd,
-        final_value=$fv, case_type=$ct, data=$data, updated_at=$now WHERE id=$id
+        effective_date=$ed, final_value=$fv, case_type=$ct, data=$data, updated_at=$now WHERE id=$id
         """;
     cmd.Parameters.AddWithValue("$id", id);
     cmd.Parameters.AddWithValue("$apn", (object?)apn ?? DBNull.Value);
     cmd.Parameters.AddWithValue("$address", (object?)address ?? DBNull.Value);
     cmd.Parameters.AddWithValue("$city", (object?)city ?? DBNull.Value);
     cmd.Parameters.AddWithValue("$rd", (object?)reportDate ?? DBNull.Value);
+    cmd.Parameters.AddWithValue("$ed", (object?)effectiveDate ?? DBNull.Value);
     cmd.Parameters.AddWithValue("$fv", (object?)finalValue ?? DBNull.Value);
     cmd.Parameters.AddWithValue("$ct", (object?)caseType ?? DBNull.Value);
     cmd.Parameters.AddWithValue("$data", AppraisalJson.SerializePortfolio(pf));
@@ -289,7 +307,7 @@ app.MapPost("/api/finalize", async (HttpContext ctx) =>
     // One row = the whole portfolio; the permanent comp is built from the main
     // subject (parcels[0]), matching the reference app's single-comp behavior.
     var pf = AppraisalJson.ParsePortfolio(dataNode);
-    var (apn, address, city, reportDate, finalValue, caseType) = ExtractSummary(pf);
+    var (apn, address, city, reportDate, _, finalValue, caseType) = ExtractSummary(pf);
     if (string.IsNullOrWhiteSpace(apn)) return Results.BadRequest(new { error = "appraisal has no APN" });
 
     // Canonical SHA-256 of the appraisal content (dedup key, with APN).
@@ -461,72 +479,6 @@ app.MapGet("/api/parcel-data/{apn}", (string apn) =>
         : Results.Ok(node);
 });
 
-// Reverse geocode: given lat/lng, return the nearest road intersection
-// (e.g. "Glider Cir & 5th St") using the Google Geocoding API.
-// The API key is pulled from the parcel data (embedded per-parcel).
-app.MapGet("/api/reverse-geocode", async (HttpContext ctx) =>
-{
-    var lat = ctx.Request.Query["lat"];
-    var lng = ctx.Request.Query["lng"];
-    var city = ctx.Request.Query["city"];
-    if (!double.TryParse(lat, out var latV) || !double.TryParse(lng, out var lngV))
-        return Results.BadRequest(new { error = "lat and lng required" });
-
-    // Reverse-geocode via Nominatim (OpenStreetMap) to get the nearest street.
-    // Fast and reliable; returns a single street name (not a full intersection).
-    // The report shows this as "Near <street>" for parcels without an address.
-    var url = $"https://nominatim.openstreetmap.org/reverse?lat={latV.ToString(System.Globalization.CultureInfo.InvariantCulture)}&lon={lngV.ToString(System.Globalization.CultureInfo.InvariantCulture)}&format=jsonv2&zoom=18";
-    try
-    {
-        using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(10) };
-        http.DefaultRequestHeaders.UserAgent.ParseAdd("AppraisalWorkbench/1.0 (contact: local)");
-        var resp = await http.GetAsync(url);
-        if (!resp.IsSuccessStatusCode)
-            return Results.Ok(new { intersection = (string?)null, address = (string?)null });
-        var body = await resp.Content.ReadAsStringAsync();
-        var json = JsonNode.Parse(body);
-        var addr = json?["address"] as JsonObject;
-        if (addr is null)
-            return Results.Ok(new { intersection = (string?)null, address = (string?)null });
-
-        // Prefer the most specific street-like field. Nominatim puts the road in
-        // "road"; residential streets may land in "residential"/"pedestrian".
-        string? street = null;
-        foreach (var key in new[] { "road", "residential", "pedestrian", "footway", "path" })
-        {
-            var v = addr[key]?.GetValue<string>();
-            if (!string.IsNullOrWhiteSpace(v) && IsStreetName(v, city)) { street = v; break; }
-        }
-        return Results.Ok(new { intersection = street, address = (string?)null });
-    }
-    catch (Exception ex)
-    {
-        return Results.Ok(new { intersection = (string?)null, address = (string?)null, error = ex.Message });
-    }
-});
-
-// True street name? Rejects route numbers (I-15, US-60, SR-74, Rte 60),
-// all-digit labels (2016, 2064), and the city name itself (Corona).
-static bool IsStreetName(string name, string? city)
-{
-    var n = name.Trim();
-    if (n.Length < 3) return false;
-    // All digits (or digits with a couple of separators) → not a street.
-    if (n.All(c => char.IsDigit(c) || c is '-' or '.' or ' ')) return false;
-    // Route-number patterns: "I-15", "US 60", "US-60", "SR 74", "CA-73", "Rte 60".
-    if (System.Text.RegularExpressions.Regex.IsMatch(n,
-        @"^(I|II|III|IV|US|SR|CA|S-|Rte|Route|Hwy|Highway)\s*[-.]?\s*\d+",
-        System.Text.RegularExpressions.RegexOptions.IgnoreCase)) return false;
-    // The city name (or a name that is just the city) is not a street.
-    if (!string.IsNullOrWhiteSpace(city))
-    {
-        var c = city.Trim();
-        if (n.Equals(c, StringComparison.OrdinalIgnoreCase)) return false;
-        if (n.Length <= c.Length + 4 && n.Contains(c, StringComparison.OrdinalIgnoreCase)) return false;
-    }
-    return true;
-}
-
 // Parcel search for the top-bar search box: APN prefix (any all-digit query)
 // or case-insensitive address substring. Returns up to 20 lightweight matches
 // so the UI can suggest PINs that have no appraisal yet.
@@ -561,426 +513,6 @@ app.MapGet("/api/parcel-search", (string? q) =>
     // APNs are fixed-length digit strings, so ordinal order is numeric order.
     results.Sort((a, b) => String.CompareOrdinal((string)a["apn"]!, (string)b["apn"]!));
     return Results.Ok(results);
-});
-
-// ---------------------------------------------------------------------------
-// Parcel satellite map — a cached World Imagery snapshot of the parcel's
-// bounding box (the same approach as the old Excel macro, minus the Excel
-// flatten hack). The parcel geometry is already local (WKT shape in the
-// master list), so only the imagery is fetched: the first request downloads
-// a 1200x675 PNG from ArcGIS World Imagery and caches it under
-// storage/parcel_maps/; later requests serve the file from disk.
-// ---------------------------------------------------------------------------
-HttpClient MapHttp = new() { Timeout = TimeSpan.FromSeconds(30) };
-MapHttp.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
-SemaphoreSlim MapLock = new(1, 1);
-// Bump this whenever the map rendering changes (extent, resolution, label
-// sizing, overlay) so cached PNGs are automatically re-rendered instead of
-// serving stale images. Old files are left on disk but no longer matched.
-const string MapCacheVersion = "v3";
-// The street-label overlay (ArcGIS World Transportation) renders its text at
-// roughly a fixed pixel size, so a higher-res base image just downscales the
-// labels more. To make street names larger we fetch the overlay at a LOWER
-// resolution (StreetLabelScale < 1) and composite it scaled UP onto the base.
-// The satellite imagery stays sharp; only the label layer is enlarged. Lower
-// value = bigger labels (but softer). 0.5 ≈ 2× larger street text.
-const double StreetLabelScale = 0.5;
-const double MercK = 20037508.342789244; // Web Mercator (EPSG:102100) half-world
-
-static double MercX(double lng) => lng * MercK / 180.0;
-static double MercY(double lat)
-{
-    var rad = lat * Math.PI / 180.0;
-    var y = Math.Log(Math.Tan(Math.PI / 4 + rad / 2)) * MercK / Math.PI;
-    return Math.Clamp(y, -MercK, MercK);
-}
-
-// Parse a WKT POLYGON/MULTIPOLYGON into rings of (lng, lat) points.
-static List<List<(double Lng, double Lat)>> ParseWktRings(string wkt)
-{
-    var rings = new List<List<(double, double)>>();
-    int depth = 0, ringStart = -1;
-    for (int i = 0; i < wkt.Length; i++)
-    {
-        if (wkt[i] == '(')
-        {
-            depth++;
-            // Always track the start: for MULTIPOLYGON(((...))) the ring's
-            // coordinates begin after the innermost '(', not the second one.
-            ringStart = i + 1;
-        }
-        else if (wkt[i] == ')')
-        {
-            if (depth == 2 && ringStart >= 0)
-            {
-                var ring = new List<(double, double)>();
-                foreach (var part in wkt[ringStart..i].Split(','))
-                {
-                    var nums = part.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
-                    if (nums.Length >= 2
-                        && double.TryParse(nums[0], NumberStyles.Float, CultureInfo.InvariantCulture, out var x)
-                        && double.TryParse(nums[1], NumberStyles.Float, CultureInfo.InvariantCulture, out var y))
-                        ring.Add((x, y));
-                }
-                if (ring.Count > 0) rings.Add(ring);
-                ringStart = -1;
-            }
-            depth--;
-        }
-    }
-    return rings;
-}
-
-// The image extent (Web Mercator) + target pixel size for a satellite snapshot.
-// The parcel bbox is padded `padding` per side, then expanded to a fixed 16:9
-// frame (matching the CSS display box) so the image is never stretched or
-// cropped. Single parcels use the default 0.4 padding (a modest zoom-in that
-// keeps context while making street labels larger on screen); a clustered
-// portfolio passes a tighter padding so the parcels fill more of the frame.
-// A tall/narrow cluster is limited by height in 16:9 and is centered with
-// empty sides — that's the correct, undistorted result. baseWidth sets the
-// render resolution (higher = sharper imagery and crisper street labels).
-static (double Xmin, double Ymin, double Xmax, double Ymax, int W, int H) MapExtent(
-    List<List<(double Lng, double Lat)>> rings, double padding = 0.4, int baseWidth = 1200)
-{
-    double xmin = double.MaxValue, ymin = double.MaxValue, xmax = double.MinValue, ymax = double.MinValue;
-    foreach (var ring in rings)
-        foreach (var (lng, lat) in ring)
-        {
-            double x = MercX(lng), y = MercY(lat);
-            if (x < xmin) xmin = x; if (x > xmax) xmax = x;
-            if (y < ymin) ymin = y; if (y > ymax) ymax = y;
-        }
-    // Degenerate (point) geometry: give it a small default footprint.
-    if (xmax - xmin < 1e-3 && ymax - ymin < 1e-3)
-    {
-        double cx = (xmin + xmax) / 2, cy = (ymin + ymax) / 2;
-        xmin = cx - 50; xmax = cx + 50; ymin = cy - 50; ymax = cy + 50;
-    }
-    double dx = (xmax - xmin) * padding, dy = (ymax - ymin) * padding;
-    xmin -= dx; xmax += dx; ymin -= dy; ymax += dy;
-    // Expand the shorter axis to a fixed 16:9 frame (no distortion).
-    const double aspect = 16.0 / 9.0;
-    double w = xmax - xmin, h = ymax - ymin;
-    if (w / h < aspect) { double dw = h * aspect - w; xmin -= dw / 2; xmax += dw / 2; }
-    else { double dh = w / aspect - h; ymin -= dh / 2; ymax += dh / 2; }
-    int W = baseWidth;
-    int H = (int)Math.Round(baseWidth / aspect);
-    return (xmin, ymin, xmax, ymax, W, H);
-}
-
-// Average of all ring points — a good-enough anchor for a parcel's APN label.
-static (double Lng, double Lat)? Centroid(List<List<(double Lng, double Lat)>> rings)
-{
-    double sx = 0, sy = 0; int n = 0;
-    foreach (var ring in rings)
-        foreach (var (lng, lat) in ring) { sx += lng; sy += lat; n++; }
-    if (n == 0) return null;
-    return (sx / n, sy / n);
-}
-
-// Draw a readable APN label with a semi-transparent background box, clamped
-// so it stays inside the image. Font size scales with the image width so the
-// label stays proportional whether the frame is a wide or a tall crop.
-static void DrawApnLabel(System.Drawing.Graphics g, string apn, System.Drawing.PointF at, int imgW, int imgH, float fontSize = 15f)
-{
-    using var font = new System.Drawing.Font("Arial", fontSize, System.Drawing.FontStyle.Bold);
-    var size = g.MeasureString(apn, font);
-    const float pad = 4f;
-    var box = new System.Drawing.RectangleF(
-        at.X - size.Width / 2 - pad,
-        at.Y - size.Height / 2 - pad,
-        size.Width + pad * 2,
-        size.Height + pad * 2);
-    if (box.X < 2) box.X = 2;
-    if (box.Y < 2) box.Y = 2;
-    if (box.Right > imgW - 2) box.X = imgW - 2 - box.Width;
-    if (box.Bottom > imgH - 2) box.Y = imgH - 2 - box.Height;
-    using (var bg = new System.Drawing.SolidBrush(Color.FromArgb(200, 15, 23, 42)))
-        g.FillRectangle(bg, box);
-    using (var border = new System.Drawing.Pen(Color.FromArgb(255, 220, 38, 38), 1.5f))
-        g.DrawRectangle(border, box);
-    using (var brush = new System.Drawing.SolidBrush(Color.White))
-        g.DrawString(apn, font, brush, box.X + pad, box.Y + pad);
-}
-
-// Composite a transparent road-label overlay (ArcGIS World Transportation
-// reference layer) over the imagery so street names are visible. Best-effort:
-// any failure is swallowed so the map still renders without labels.
-// The overlay is fetched at StreetLabelScale × the base size (a lower
-// resolution) and drawn at the full base size, which scales the street text
-// UP so it reads larger on screen while the satellite base stays sharp.
-async Task DrawStreetLabelsAsync(System.Drawing.Graphics g, double xmin, double ymin, double xmax, double ymax, int w, int h)
-{
-    try
-    {
-        int ow = Math.Max(1, (int)Math.Round(w * StreetLabelScale));
-        int oh = Math.Max(1, (int)Math.Round(h * StreetLabelScale));
-        var url = $"https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/export"
-            + $"?bbox={xmin:R},{ymin:R},{xmax:R},{ymax:R}&bboxSR=102100&imageSR=102100"
-            + $"&size={ow},{oh}&format=png32&transparent=true&f=image";
-        using var resp = await MapHttp.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
-        if (!resp.IsSuccessStatusCode) return;
-        var body = await resp.Content.ReadAsByteArrayAsync();
-        using var ms = new MemoryStream(body);
-        using var overlay = new System.Drawing.Bitmap(ms);
-        // Draw the (smaller) overlay stretched to the full base size → labels
-        // are enlarged by 1/StreetLabelScale. High-quality interpolation keeps
-        // the enlarged text as crisp as the upscaling allows.
-        var state = g.InterpolationMode;
-        g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
-        try { g.DrawImage(overlay, 0, 0, w, h); }
-        finally { g.InterpolationMode = state; }
-    }
-    catch { /* street labels are best-effort; never block the map */ }
-}
-
-// The image extent for a parcel (no network needed — geometry is local).
-// Returns null when the APN is invalid or has no geometry.
-JsonObject? ParcelMapExtentJson(string apn)
-{
-    if (!apn.All(char.IsDigit)) return null;
-    var node = LoadParcelIndex().TryGetValue(apn, out var p) ? p : null;
-    var shape = Str(node?["shape"]) ?? "";
-    var rings = ParseWktRings(shape);
-    if (rings.Count == 0) return null;
-    var (xmin, ymin, xmax, ymax, _, _) = MapExtent(rings);
-    return new JsonObject {
-        ["apn"] = apn,
-        ["bbox"] = new JsonArray(xmin, ymin, xmax, ymax),
-    };
-}
-
-app.MapGet("/api/parcel-map/{apn}", (string apn) =>
-{
-    var json = ParcelMapExtentJson(apn);
-    return json is null
-        ? Results.NotFound(new { error = "no parcel geometry for " + apn })
-        : Results.Ok(json);
-});
-
-// Download the ArcGIS satellite PNG for the parcel's 16:9 extent, composite
-// the red parcel outline onto it, and cache the result as a single {apn}.png.
-// The file is kept forever after the first download; use /refresh to re-pull.
-async Task<string?> FetchParcelImageAsync(string apn)
-{
-    var dir = Path.Combine(app.Environment.ContentRootPath, "storage", "parcel_maps");
-    Directory.CreateDirectory(dir);
-    var file = Path.Combine(dir, $"{apn}.{MapCacheVersion}.png");
-    if (File.Exists(file)) return file;
-
-    var node = LoadParcelIndex().TryGetValue(apn, out var p) ? p : null;
-    var rings = ParseWktRings(Str(node?["shape"]) ?? "");
-    if (rings.Count == 0) return null;
-    var (xmin, ymin, xmax, ymax, imgW, imgH) = MapExtent(rings);
-
-    await MapLock.WaitAsync();
-    try
-    {
-        if (!File.Exists(file)) // another request may have filled it meanwhile
-        {
-            var url = $"https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/export"
-                + $"?bbox={xmin:R},{ymin:R},{xmax:R},{ymax:R}&bboxSR=102100&imageSR=102100"
-                + $"&size={imgW},{imgH}&format=png32&f=image";
-            using var resp = await MapHttp.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
-            if (!resp.IsSuccessStatusCode)
-            {
-                File.WriteAllText(Path.Combine(dir, "last_error.txt"),
-                    $"HTTP {(int)resp.StatusCode}\nURL: {url}\n{(await resp.Content.ReadAsStringAsync()).Substring(0, 500)}");
-                return null;
-            }
-            var body = await resp.Content.ReadAsByteArrayAsync();
-            using var ms = new MemoryStream(body);
-            using var img = new System.Drawing.Bitmap(ms);
-            using var g = System.Drawing.Graphics.FromImage(img);
-            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-            g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
-            // Street names first (under the outline/label).
-            await DrawStreetLabelsAsync(g, xmin, ymin, xmax, ymax, img.Width, img.Height);
-            PointF Pt(ValueTuple<double, double> l)
-            {
-                double mx = MercX(l.Item1);
-                double my = MercY(l.Item2);
-                return new PointF(
-                    (float)((mx - xmin) / (xmax - xmin) * img.Width),
-                    (float)((ymax - my) / (ymax - ymin) * img.Height));
-            }
-            foreach (var ring in rings)
-            {
-                var pts = ring.Select(Pt).ToArray();
-                if (pts.Length < 3) continue;
-                using (var fill = new System.Drawing.SolidBrush(Color.FromArgb(46, 220, 38, 38)))
-                    g.FillPolygon(fill, pts);
-                using (var pen = new System.Drawing.Pen(Color.FromArgb(255, 220, 38, 38), 4f)
-                {
-                    DashStyle = System.Drawing.Drawing2D.DashStyle.Custom,
-                    DashPattern = new float[] { 8f, 5f },
-                    StartCap = System.Drawing.Drawing2D.LineCap.Round,
-                    EndCap = System.Drawing.Drawing2D.LineCap.Round,
-                })
-                    g.DrawPolygon(pen, pts);
-            }
-            var c = Centroid(rings);
-            if (c is not null) DrawApnLabel(g, apn, Pt(c.Value), img.Width, img.Height);
-            await using var fs = File.Create(file + ".tmp");
-            img.Save(fs, System.Drawing.Imaging.ImageFormat.Png);
-            await fs.DisposeAsync();
-            File.Move(file + ".tmp", file);
-        }
-    }
-    catch (Exception ex)
-    {
-        try { File.WriteAllText(Path.Combine(dir, "last_error.txt"), ex.ToString()); } catch { /* ignore */ }
-    }
-    finally { MapLock.Release(); }
-    return File.Exists(file) ? file : null;
-}
-
-
-
-// Serves the cached satellite+outline PNG (downloads & composites on first use).
-app.MapGet("/api/parcel-image/{apn}", async (HttpContext ctx, string apn) =>
-{
-    if (!apn.All(char.IsDigit)) return Results.BadRequest(new { error = "invalid apn" });
-    var file = await FetchParcelImageAsync(apn);
-    if (file is null) return Results.NotFound(new { error = "imagery unavailable" });
-    ctx.Response.Headers["Cache-Control"] = "public, max-age=3600";
-    return Results.File(file, "image/png");
-});
-
-// Force re-download (the ↻ Refresh button). Deletes the cache and re-pulls.
-app.MapPost("/api/parcel-image/{apn}/refresh", async (string apn) =>
-{
-    if (!apn.All(char.IsDigit)) return Results.BadRequest(new { error = "invalid apn" });
-    var dir = Path.Combine(app.Environment.ContentRootPath, "storage", "parcel_maps");
-    var f = Path.Combine(dir, $"{apn}.{MapCacheVersion}.png");
-    if (File.Exists(f)) File.Delete(f);
-    var fresh = await FetchParcelImageAsync(apn);
-    return fresh is null ? Results.NotFound(new { error = "imagery unavailable" }) : Results.Ok(new { ok = true });
-});
-
-// ---------------------------------------------------------------------------
-// Multi-parcel (portfolio) map: combine all parcel polygons into one image.
-// ---------------------------------------------------------------------------
-app.MapGet("/api/parcel-map/multi", (string? apns) =>
-{
-    if (string.IsNullOrWhiteSpace(apns)) return Results.BadRequest(new { error = "missing apns" });
-    var list = apns.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-        .Where(s => s.All(char.IsDigit)).ToList();
-    if (list.Count == 0) return Results.BadRequest(new { error = "no valid apns" });
-    var idx = LoadParcelIndex();
-    var allRings = new List<List<(double Lng, double Lat)>>();
-    foreach (var apn in list)
-    {
-        var node = idx.TryGetValue(apn, out var p) ? p : null;
-        allRings.AddRange(ParseWktRings(Str(node?["shape"]) ?? ""));
-    }
-    if (allRings.Count == 0) return Results.NotFound(new { error = "no geometry for any apn" });
-    var (xmin, ymin, xmax, ymax, _, _) = MapExtent(allRings);
-    return Results.Ok(new JsonObject {
-        ["apns"] = new JsonArray(list.Select(a => (JsonNode)a).ToArray()),
-        ["bbox"] = new JsonArray(xmin, ymin, xmax, ymax),
-    });
-});
-
-// Combined satellite image with all parcel outlines, APN labels, and street
-// names drawn. Per-parcel rings are kept so each APN is labeled at its own
-// centroid.
-async Task<string?> FetchMultiParcelImageAsync(List<string> apns)
-{
-    var dir = Path.Combine(app.Environment.ContentRootPath, "storage", "parcel_maps");
-    Directory.CreateDirectory(dir);
-    var key = string.Join("_", apns.OrderBy(a => a));
-    var file = Path.Combine(dir, $"multi_{key}.{MapCacheVersion}.png");
-    if (File.Exists(file)) return file;
-    var idx = LoadParcelIndex();
-    var perParcel = new List<(string Apn, List<List<(double Lng, double Lat)>> Rings)>();
-    var allRings = new List<List<(double Lng, double Lat)>>();
-    foreach (var apn in apns)
-    {
-        var node = idx.TryGetValue(apn, out var p) ? p : null;
-        var rings = ParseWktRings(Str(node?["shape"]) ?? "");
-        if (rings.Count > 0)
-        {
-            perParcel.Add((apn, rings));
-            allRings.AddRange(rings);
-        }
-    }
-    if (allRings.Count == 0) return null;
-    // Tighter padding so a clustered portfolio fills the frame (the adaptive
-    // aspect ratio in MapExtent then picks a frame that fits the cluster shape).
-    var (xmin, ymin, xmax, ymax, imgW, imgH) = MapExtent(allRings, padding: 0.15);
-    await MapLock.WaitAsync();
-    try
-    {
-        if (!File.Exists(file))
-        {
-            var url = $"https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/export"
-                + $"?bbox={xmin:R},{ymin:R},{xmax:R},{ymax:R}&bboxSR=102100&imageSR=102100"
-                + $"&size={imgW},{imgH}&format=png32&f=image";
-            using var resp = await MapHttp.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
-            if (!resp.IsSuccessStatusCode) return null;
-            var body = await resp.Content.ReadAsByteArrayAsync();
-            using var ms = new MemoryStream(body);
-            using var img = new System.Drawing.Bitmap(ms);
-            using var g = System.Drawing.Graphics.FromImage(img);
-            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-            g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
-            // Street names first (under the outlines/labels).
-            await DrawStreetLabelsAsync(g, xmin, ymin, xmax, ymax, img.Width, img.Height);
-            PointF Pt(ValueTuple<double, double> l)
-            {
-                double mx = MercX(l.Item1), my = MercY(l.Item2);
-                return new PointF(
-                    (float)((mx - xmin) / (xmax - xmin) * img.Width),
-                    (float)((ymax - my) / (ymax - ymin) * img.Height));
-            }
-            foreach (var (_, rings) in perParcel)
-                foreach (var ring in rings)
-                {
-                    var pts = ring.Select(Pt).ToArray();
-                    if (pts.Length < 3) continue;
-                    using (var fill = new System.Drawing.SolidBrush(Color.FromArgb(46, 220, 38, 38)))
-                        g.FillPolygon(fill, pts);
-                    using (var pen = new System.Drawing.Pen(Color.FromArgb(255, 220, 38, 38), 4f)
-                    {
-                        DashStyle = System.Drawing.Drawing2D.DashStyle.Custom,
-                        DashPattern = new float[] { 8f, 5f },
-                        StartCap = System.Drawing.Drawing2D.LineCap.Round,
-                        EndCap = System.Drawing.Drawing2D.LineCap.Round,
-                    })
-                        g.DrawPolygon(pen, pts);
-                }
-            // APN labels at each parcel centroid. Font scales with the frame so
-            // it stays proportional to the (now larger) parcels.
-            float labelFont = img.Width * 0.011f;
-            foreach (var (apn, rings) in perParcel)
-            {
-                var c = Centroid(rings);
-                if (c is null) continue;
-                DrawApnLabel(g, apn, Pt(c.Value), img.Width, img.Height, labelFont);
-            }
-            await using var fs = File.Create(file + ".tmp");
-            img.Save(fs, System.Drawing.Imaging.ImageFormat.Png);
-            await fs.DisposeAsync();
-            File.Move(file + ".tmp", file);
-        }
-    }
-    catch { /* ignore */ }
-    finally { MapLock.Release(); }
-    return File.Exists(file) ? file : null;
-}
-
-app.MapGet("/api/parcel-image/multi", async (HttpContext ctx, string? apns) =>
-{
-    if (string.IsNullOrWhiteSpace(apns)) return Results.BadRequest(new { error = "missing apns" });
-    var list = apns.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-        .Where(s => s.All(char.IsDigit)).ToList();
-    if (list.Count == 0) return Results.BadRequest(new { error = "no valid apns" });
-    var file = await FetchMultiParcelImageAsync(list);
-    if (file is null) return Results.NotFound(new { error = "imagery unavailable" });
-    ctx.Response.Headers["Cache-Control"] = "public, max-age=3600";
-    return Results.File(file, "image/png");
 });
 
 // ---------------------------------------------------------------------------
@@ -1081,7 +613,7 @@ app.Run("http://127.0.0.1:5000");
 // Pull denormalized summary fields out of a portfolio's main subject parcel
 // (parcels[0]). The denormalized columns (apn/address/city/final_value) always
 // reflect the main subject so the list view and finalize flow keep working.
-static (string? apn, string? address, string? city, string? reportDate, double? finalValue, string? caseType) ExtractSummary(Portfolio pf)
+static (string? apn, string? address, string? city, string? reportDate, string? effectiveDate, double? finalValue, string? caseType) ExtractSummary(Portfolio pf)
 {
     var data = pf.MainSubject;
     var p = data.Property;
@@ -1090,6 +622,7 @@ static (string? apn, string? address, string? city, string? reportDate, double? 
         string.IsNullOrWhiteSpace(p.Address) ? null : p.Address,
         string.IsNullOrWhiteSpace(p.City) ? null : p.City,
         string.IsNullOrWhiteSpace(p.ReportDate) ? null : p.ReportDate,
+        string.IsNullOrWhiteSpace(p.EffectiveDate) ? null : p.EffectiveDate,
         data.Reconciliation.FinalValue,
         string.IsNullOrWhiteSpace(p.CaseType) ? null : p.CaseType);
 }

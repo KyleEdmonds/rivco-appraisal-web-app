@@ -6,7 +6,7 @@ import {
   state, markDirty, computeAppraisal, hasCostData, hasIncomeData,
   fmtCurrency, fmtCurrencyRounded, fmtNumber, fmtPct, fmtAcresNum, fmtDate, fmtDateMDY, normalizeCity, titleCase, api,
   getLocalComps, clearLocalComps, importLocalComps, scheduleAutosave,
-  resolveSubjectImageUrl, resolveCoverPhotoUrl, resolvePhotoUrl, resolveCompPhotoUrl, rankCompsBySimilarity,
+  resolveSubjectImageUrl, resolveCoverPhotoUrl, resolvePhotoUrl, resolveCompPhotoUrl, photoImg, rankCompsBySimilarity,
   isPortfolio, activeParcelIndex, reportMode, selectParcel, setViewMode, addParcel, removeParcel, resetActiveParcel, computePortfolioAggregate,
 } from './core.js';
 import { renderReport, scrollToSection } from './report.js';
@@ -24,7 +24,7 @@ let activeCompIdx = 0;
 
 const TYPE_OPTIONS = [
   'Commercial / Office-Retail', 'Office', 'Retail', 'Multi-Family',
-  'Industrial / Warehouse', 'Single-Family', 'Accessory',
+  'Industrial / Warehouse', 'Single-Family', 'Accessory', 'Vacant Land',
 ];
 const CONDITION_OPTIONS = ['New', 'Excellent', 'Good', 'Average', 'Fair', 'Poor'];
 const COMP_QUALITY = ['C1.0', 'C2.0', 'C2.5', 'C3.0', 'C4.0'];
@@ -68,10 +68,14 @@ function toast(msg, isError = false) {
 
 // --- state path binding ------------------------------------------------------
 
+// Fields normally bind to the active parcel (state.data). When rendering a
+// per-parcel section (e.g. the portfolio Subject tab), `bindRoot` is
+// temporarily set to that parcel so the same field helpers target it.
+let bindRoot = null;
 function resolvePath(path) {
   const parts = path.split('.');
   const key = parts.pop();
-  let parent = state.data;
+  let parent = bindRoot || state.data;
   for (const p of parts) parent = parent[p];
   return [parent, key];
 }
@@ -131,6 +135,12 @@ function refreshComputed() {
   document.querySelectorAll('[data-data]').forEach((n) => {
     n.textContent = fmtVal(dataValue(n.dataset.data), n.dataset.fmt || 'raw');
   });
+  // Per-parcel effective age (portfolio Subject tab): each input carries the
+  // parcel index so it tracks that parcel's year built / effective date.
+  document.querySelectorAll('[data-parcel-effage]').forEach((n) => {
+    const parcel = state.portfolio.parcels[Number(n.dataset.parcelEffage)];
+    if (parcel) n.value = fmtNumber(parcelEffAge(parcel));
+  });
   updateCoverComplete();
   updateTabStatus();
   renderReport();
@@ -141,6 +151,65 @@ function refreshComputed() {
 
 function bindInput(input, apply) {
   input.addEventListener('input', () => { apply(input.value); markDirty(); refreshComputed(); });
+}
+
+// --- thousands-separator (comma) formatting for numeric inputs ---------------
+// <input type="number"> can't display commas, so numeric fields use a text
+// input (inputmode=decimal) that live-formats the integer part with commas
+// while still storing a plain number in state.
+
+// Format a numeric string (digits, optional leading '-', at most one '.') with
+// thousands separators.
+function formatCommas(str) {
+  const neg = str.startsWith('-');
+  let s = neg ? str.slice(1) : str;
+  const dot = s.indexOf('.');
+  let intPart = dot === -1 ? s : s.slice(0, dot);
+  const decPart = dot === -1 ? null : s.slice(dot + 1);
+  intPart = intPart.replace(/^0+(?=\d)/, ''); // strip leading zeros, keep one
+  const grouped = intPart === '' ? '' : intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  let out = (neg ? '-' : '') + grouped;
+  if (decPart !== null) out += '.' + decPart;
+  return out;
+}
+
+// Parse a (possibly comma-formatted) numeric string back to a number.
+function parseComma(str) {
+  const c = String(str).replace(/[^0-9.-]/g, '');
+  if (c === '' || c === '-' || c === '.') return 0;
+  const n = Number(c);
+  return Number.isFinite(n) ? n : 0;
+}
+
+// Live comma formatting for a numeric text input. On every change it strips the
+// value to a valid number, re-inserts thousands separators, restores the caret,
+// then calls `commit(parsedNumber)`. `group=false` keeps the value plain (no
+// commas) — used for fields like Year Built where a comma would be wrong.
+function bindCommaInput(input, commit, group = true) {
+  input.addEventListener('input', () => {
+    const raw = input.value;
+    const caret = input.selectionStart ?? raw.length;
+    const digitsBefore = raw.slice(0, caret).replace(/,/g, '').length;
+
+    // Reduce to a valid numeric string: digits, one '.', optional leading '-'.
+    let s = raw.replace(/,/g, '').replace(/[^0-9.-]/g, '');
+    const dot = s.indexOf('.');
+    if (dot !== -1) s = s.slice(0, dot + 1) + s.slice(dot + 1).replace(/\./g, '');
+    if (s.indexOf('-') !== 0) s = s.replace(/-/g, '');
+
+    const formatted = group ? formatCommas(s) : s;
+    input.value = formatted;
+
+    // Restore the caret after the same count of real (non-comma) characters.
+    let pos = 0, seen = 0;
+    while (pos < formatted.length && seen < digitsBefore) {
+      if (formatted[pos] !== ',') seen++;
+      pos++;
+    }
+    try { input.setSelectionRange(pos, pos); } catch { /* not focusable */ }
+
+    commit(parseComma(s));
+  });
 }
 
 // 9px uppercase label + h-5 text input (fields.tsx TextField)
@@ -162,12 +231,15 @@ function numField(label, path, opts = {}) {
   const wrap = el('div', { class: 'field' }, el('label', {}, label));
   const box = el('div', { class: 'numwrap' });
   if (opts.prefix) box.append(el('span', { class: 'chip-pre' }, opts.prefix));
-  const input = el('input', { type: 'number', step: opts.step ?? 'any' });
+  const group = opts.group !== false;
+  const input = el('input', { type: 'text', inputmode: 'decimal' });
   // Show blank (not 0) for empty/default numeric fields; a real 0 the user
   // types still reads back as 0 while editing.
-  input.value = (Number.isFinite(parent[key]) && parent[key] !== 0) ? parent[key] : '';
+  input.value = (Number.isFinite(parent[key]) && parent[key] !== 0)
+    ? (group ? formatCommas(String(parent[key])) : String(parent[key]))
+    : '';
   input.addEventListener('focus', () => input.select());
-  bindInput(input, (v) => { parent[key] = v === '' ? 0 : Number(v); });
+  bindCommaInput(input, (n) => { parent[key] = n; markDirty(); refreshComputed(); }, group);
   box.append(input);
   if (opts.suffix) box.append(el('span', { class: 'chip-post' }, opts.suffix));
   wrap.append(box);
@@ -243,12 +315,15 @@ function denseInput(path, type = 'text') {
   bindInput(input, (v) => { parent[key] = v; });
   return input;
 }
-function denseNum(path) {
+function denseNum(path, opts = {}) {
   const [parent, key] = resolvePath(path);
-  const input = el('input', { class: 'inp', type: 'number', step: 'any' });
-  input.value = (Number.isFinite(parent[key]) && parent[key] !== 0) ? parent[key] : '';
+  const group = opts.group !== false;
+  const input = el('input', { class: 'inp', type: 'text', inputmode: 'decimal' });
+  input.value = (Number.isFinite(parent[key]) && parent[key] !== 0)
+    ? (group ? formatCommas(String(parent[key])) : String(parent[key]))
+    : '';
   input.addEventListener('focus', () => input.select());
-  bindInput(input, (v) => { parent[key] = v === '' ? 0 : Number(v); });
+  bindCommaInput(input, (n) => { parent[key] = n; markDirty(); refreshComputed(); }, group);
   return input;
 }
 // Like selectField: a current value outside the option list is added so it
@@ -305,6 +380,41 @@ function imgBox(title, path) {
 let activeImageDrop = null;
 let imagePasteBound = false;
 
+// Google Static Maps API key (for the Subject Photos "Map" button).
+const GOOGLE_MAPS_KEY = 'AIzaSyDVg3H1uUcUbkitQl7_3AQwRpzAft5k358';
+
+// Read an image file into a base64 data URL and hand back a "pending" photo
+// reference. Pending photos live in the appraisal data (NOT the parcel page)
+// while the report is being worked on — they're uploaded to the parcel page
+// only when the report is finalized (see flushPendingPhotos in main.js).
+// `source` is 'upload' by default; Google map images use 'map' so they stay
+// with the report on the user's PC and are never uploaded to the parcel page
+// (flushPendingPhotos only uploads source 'upload' photos).
+function readPendingPhoto(f, onDone, source = 'upload') {
+  const reader = new FileReader();
+  reader.onload = () => {
+    const ext = (f.type.split('/')[1] || 'png').replace('jpeg', 'jpg');
+    onDone({ source, file: `photo-${Date.now()}-${Math.random().toString(36).slice(2, 7)}.${ext}`, dataUrl: reader.result });
+  };
+  reader.onerror = () => toast('Upload failed', true);
+  reader.readAsDataURL(f);
+}
+
+// Add a pasted image to the current parcel's Subject Photos list.
+// Shared by the Subject tab's Paste button and the global Ctrl+V handler.
+function pasteImageToSubjectPhotos(f) {
+  const p = state.data.property;
+  const apn = String(p.apn || '').trim();
+  if (!apn) { toast('Set an APN first', true); return; }
+  if (!Array.isArray(p.subjectPhotos)) p.subjectPhotos = [];
+  readPendingPhoto(f, (photo) => {
+    p.subjectPhotos.push(photo);
+    markDirty();
+    renderForm();
+    refreshComputed();
+  });
+}
+
 // Single-photo panel for the cover page. Manages property.subjectImage — the
 // one image shown on the cover. Auto-populates with the GIS satellite map; the
 // user can replace it with an uploaded/pasted photo or remove it (back to GIS).
@@ -331,7 +441,7 @@ function coverPhotoPanel() {
     const none = isNone();
     preview.append(
       url
-        ? el('img', { src: url, alt: 'Cover photo' })
+        ? photoImg(url, 'Cover photo')
         : el('div', { class: 'cover-photo-ph' }, 'No image'),
     );
     preview.append(el('div', { class: 'cover-photo-label' },
@@ -352,12 +462,7 @@ function coverPhotoPanel() {
   const uploadFile = (f) => {
     if (!f || !f.type || !f.type.startsWith('image/')) return;
     if (!apn) { toast('Set an APN first', true); return; }
-    const fd = new FormData();
-    fd.append('file', f);
-    fetch(`/api/parcel-photos/${encodeURIComponent(apn)}`, { method: 'POST', body: fd })
-      .then(r => r.json())
-      .then(res => { if (res.saved && res.saved[0]) setPhoto({ source: 'upload', file: res.saved[0] }); })
-      .catch(() => toast('Upload failed', true));
+    readPendingPhoto(f, (photo) => setPhoto(photo));
   };
 
   // Google Images button — opens a Google image search for the address + city.
@@ -392,7 +497,8 @@ function coverPhotoPanel() {
   };
 
   // Paste handler (module-level, bound once). Reads the current APN at paste
-  // time so it stays correct across re-renders.
+  // time so it stays correct across re-renders. Routes to the Subject Photos
+  // panel when the Subject tab is active, otherwise to the Cover photo.
   if (!imagePasteBound) {
     imagePasteBound = true;
     document.addEventListener('paste', (e) => {
@@ -405,19 +511,16 @@ function coverPhotoPanel() {
           const f = it.getAsFile();
           const curApn = String(state.data.property.apn || '').trim();
           if (f && curApn) {
-            const fd = new FormData();
-            fd.append('file', f);
-            fetch(`/api/parcel-photos/${encodeURIComponent(curApn)}`, { method: 'POST', body: fd })
-              .then(r => r.json())
-              .then(res => {
-                if (res.saved && res.saved[0]) {
-                  state.data.property.subjectImage = { source: 'upload', file: res.saved[0] };
-                  markDirty();
-                  renderForm();
-                  refreshComputed();
-                }
-              })
-              .catch(() => toast('Upload failed', true));
+            if (activeTab === 'subject') {
+              pasteImageToSubjectPhotos(f);
+            } else {
+              readPendingPhoto(f, (photo) => {
+                state.data.property.subjectImage = photo;
+                markDirty();
+                renderForm();
+                refreshComputed();
+              });
+            }
             e.preventDefault();
             break;
           }
@@ -457,7 +560,7 @@ function subjectPhotosPanel() {
       const url = resolvePhotoUrl(d, ph);
       const cell = el('div', { class: 'img-thumb' });
       cell.append(url
-        ? el('img', { src: url, alt: `Subject photo ${i + 1}` })
+        ? photoImg(url, `Subject photo ${i + 1}`)
         : el('div', { class: 'img-thumb-ph' }, 'Photo'));
       const rm = el('button', { class: 'btn tiny danger img-thumb-rm' }, 'Remove');
       rm.onclick = () => { p.subjectPhotos.splice(i, 1); markDirty(); refreshComputed(); reRender(); };
@@ -482,12 +585,7 @@ function subjectPhotosPanel() {
   const uploadFile = (f) => {
     if (!f || !f.type || !f.type.startsWith('image/')) return;
     if (!apn) { toast('Set an APN first', true); return; }
-    const fd = new FormData();
-    fd.append('file', f);
-    fetch(`/api/parcel-photos/${encodeURIComponent(apn)}`, { method: 'POST', body: fd })
-      .then(r => r.json())
-      .then(res => { if (res.saved && res.saved[0]) addPhoto({ source: 'upload', file: res.saved[0] }); })
-      .catch(() => toast('Upload failed', true));
+    readPendingPhoto(f, (photo) => addPhoto(photo));
   };
 
   const fileInput = el('input', { type: 'file', accept: 'image/*', multiple: true });
@@ -499,14 +597,124 @@ function subjectPhotosPanel() {
     fileInput.value = '';
   };
 
-  wrap.ondragover = (e) => { e.preventDefault(); wrap.classList.add('drag'); };
-  wrap.ondragleave = () => wrap.classList.remove('drag');
-  wrap.ondrop = (e) => {
-    e.preventDefault(); wrap.classList.remove('drag');
-    for (const f of e.dataTransfer.files) uploadFile(f);
+  // Paste an image from the clipboard (e.g. a screenshot) and upload it.
+  // On 127.0.0.1 the browser grants clipboard access silently, so this is
+  // a true one-click paste. Fallback with no permission: click the button,
+  // then press Ctrl+V (the button is a paste target).
+  const pasteBtn = el('button', { class: 'btn tiny img-mode-btn', title: 'Paste an image from the clipboard' }, '📋 Clipboard');
+  const doClipboardPaste = async () => {
+    const items = await navigator.clipboard.read();
+    let found = false;
+    for (const item of items) {
+      const type = item.types.find((t) => t.startsWith('image/'));
+      if (!type) continue;
+      const blob = await item.getType(type);
+      const ext = (type.split('/')[1] || 'png').replace('jpeg', 'jpg');
+      uploadFile(new File([blob], `pasted-${Date.now()}.${ext}`, { type }));
+      found = true;
+    }
+    if (!found) toast('No image found on the clipboard', true);
+  };
+  pasteBtn.onclick = async () => {
+    // Clipboard APIs only exist in secure contexts (https or 127.0.0.1/localhost).
+    if (!window.isSecureContext || !navigator.clipboard) {
+      toast('Clipboard unavailable — open the app via http://127.0.0.1:5000 (not a network IP), or use Upload / drag-drop', true);
+      return;
+    }
+    try {
+      // One-time permission grant (only prompts if not yet decided).
+      if (navigator.permissions?.query && navigator.clipboard.requestPermission) {
+        try {
+          const st = await navigator.permissions.query({ name: 'clipboard-read' });
+          if (st.state === 'prompt') {
+            const granted = await navigator.clipboard.requestPermission();
+            if (granted !== 'granted') {
+              toast('Clipboard blocked — click the button and press Ctrl+V instead', true);
+              pasteBtn.focus();
+              return;
+            }
+          } else if (st.state === 'denied') {
+            toast('Clipboard blocked in browser settings — click the button and press Ctrl+V instead', true);
+            pasteBtn.focus();
+            return;
+          }
+        } catch { /* query unsupported — fall through and try the read */ }
+      }
+      await doClipboardPaste();
+    } catch (e) {
+      console.warn('clipboard paste failed', e);
+      toast(`Paste failed (${e && e.name ? e.name : 'error'}) — click the button and press Ctrl+V instead`, true);
+      pasteBtn.focus();
+    }
+  };
+  // No-permission fallback: click the button, then Ctrl+V.
+  pasteBtn.addEventListener('paste', (e) => {
+    const items = e.clipboardData && e.clipboardData.items;
+    if (!items) return;
+    for (const it of items) {
+      if (it.type && it.type.startsWith('image/')) {
+        const f = it.getAsFile();
+        if (f) { uploadFile(f); e.preventDefault(); break; }
+      }
+    }
+  });
+
+  // Add a Google Static Map image of the property's address + city as a
+  // subject photo. Tagged source 'map' so it stays with the report on the
+  // user's PC (form, report preview, PDF) and is never uploaded to the
+  // server's parcel page.
+  const mapBtn = el('button', { class: 'btn tiny img-mode-btn', title: 'Add a Google map image of the address + city' }, '🗺 Map');
+  mapBtn.onclick = async () => {
+    const addr = String(p.address || '').trim();
+    const city = String(p.city || '').trim();
+    if (!addr && !city) { toast('Set an address first', true); return; }
+    const center = [addr, city].filter(Boolean).join(', ');
+    // A red pin at the geocoded address (same location as the center). The
+    // '|' option separators are URL-encoded by encodeURIComponent.
+    const marker = `size:mid|color:0xFF0000|${center}`;
+    const url = 'https://maps.googleapis.com/maps/api/staticmap'
+      + `?center=${encodeURIComponent(center)}`
+      + '&zoom=14&size=560x400&scale=2&maptype=hybrid'
+      + `&markers=${encodeURIComponent(marker)}`
+      + `&key=${GOOGLE_MAPS_KEY}`;
+    mapBtn.disabled = true;
+    try {
+      // no-referrer: the API key has HTTP referrer restrictions that don't
+      // include 127.0.0.1, so a Referer header makes Google return 403.
+      // (Excel's URLDownloadToFile works because it sends no referrer.)
+      const r = await fetch(url, { referrerPolicy: 'no-referrer' });
+      if (!r.ok) throw new Error(`Google Maps error ${r.status}`);
+      const blob = await r.blob();
+      if (!blob.type.startsWith('image/')) throw new Error('response was not an image');
+      readPendingPhoto(new File([blob], `map-${Date.now()}.png`, { type: blob.type }), (photo) => addPhoto(photo), 'map');
+    } catch (e) {
+      toast(`Map image failed: ${e.message}`, true);
+    } finally {
+      mapBtn.disabled = false;
+    }
   };
 
-  modeBtns.append(uploadBtn);
+  wrap.ondragover = (e) => { e.preventDefault(); e.stopPropagation(); wrap.classList.add('drag'); };
+  wrap.ondragenter = (e) => { e.preventDefault(); e.stopPropagation(); wrap.classList.add('drag'); };
+  wrap.ondragleave = (e) => { e.preventDefault(); wrap.classList.remove('drag'); };
+  wrap.ondrop = (e) => {
+    e.preventDefault(); e.stopPropagation(); wrap.classList.remove('drag');
+    // Files dragged from the OS file manager arrive in dataTransfer.files;
+    // images dragged from a browser tab / another app arrive only in
+    // dataTransfer.items (as File objects via getAsFile).
+    const files = Array.from(e.dataTransfer.files || []);
+    if (files.length > 0) {
+      for (const f of files) uploadFile(f);
+      return;
+    }
+    for (const it of e.dataTransfer.items || []) {
+      if (it.kind !== 'file') continue;
+      const f = it.getAsFile();
+      if (f && f.type.startsWith('image/')) uploadFile(f);
+    }
+  };
+
+  modeBtns.append(uploadBtn, pasteBtn, mapBtn);
   wrap.append(
     el('div', { class: 'img-panel-head' }, el('span', { class: 'img-panel-title' }, 'Subject Photos'), modeBtns),
     grid,
@@ -516,17 +724,80 @@ function subjectPhotosPanel() {
   return wrap;
 }
 
-function subjectTab() {
-  const d = state.data;
-  const imp = d.improvements.primary;
-  const { outbuildings } = d.improvements;
-
-  const dgCell = (label, node) => el('div', { class: 'dg-cell' }, el('span', { class: 'dg-cell-label' }, label), node);
-  const psGroup = (title, fields, extra) => el('div', { class: 'ps-group' },
+// --- shared dense-grid building blocks (Property Summary) --------------------
+// Hoisted to module scope so both the single-parcel Subject tab and the
+// per-parcel portfolio Subject sections can reuse them.
+function dgCell(label, node) {
+  return el('div', { class: 'dg-cell' }, el('span', { class: 'dg-cell-label' }, label), node);
+}
+function psGroup(title, fields, extra) {
+  return el('div', { class: 'ps-group' },
     el('div', { class: 'ps-group-title' }, title),
     el('div', { class: 'ps-group-grid' }, ...fields),
     extra || null,
   );
+}
+
+// Effective age for a given parcel (year built vs. effective date).
+function parcelEffAge(parcel) {
+  const yb = parcel?.improvements?.primary?.yearBuilt;
+  const ed = parcel?.property?.effectiveDate;
+  return yb && ed ? parseInt(String(ed).slice(0, 4), 10) - yb : 0;
+}
+
+// Property Summary for one parcel (Property / Building / Land groups). Used by
+// both the single-parcel Subject tab and each per-APN section in the portfolio.
+function propertySummaryGroups() {
+  return [
+    psGroup('Property', [
+      dgCell('Parcel Number', denseInput('property.apn')),
+      dgCell('Address', denseInput('property.address')),
+      dgCell('City', denseInput('property.city')),
+      dgCell('Property Type', denseSelect('improvements.primary.type', TYPE_OPTIONS)),
+    ]),
+    psGroup('Building', [
+      dgCell('Building Area (SF)', denseNum('improvements.primary.grossFloorArea')),
+      dgCell('Leasable Area (SF)', denseNum('improvements.primary.nla')),
+      dgCell('Year Built', denseNum('improvements.primary.yearBuilt', { group: false })),
+      dgCell('Effective Age', el('input', { class: 'inp', readonly: true, 'data-calc': 'effAge', 'data-fmt': 'num', value: fmtVal(calcValue('effAge'), 'num') })),
+      dgCell('Quality', denseInput('improvements.primary.quality')),
+      dgCell('Condition', denseSelect('improvements.primary.condition', CONDITION_OPTIONS)),
+    ]),
+    psGroup('Land', [
+      dgCell('Site Area (Acres)', denseNum('land.acres')),
+      dgCell('Site Area (SF)', denseNum('land.siteAreaSqFt')),
+      dgCell('Zoning', denseInput('land.zoning')),
+    ]),
+  ];
+}
+
+// Portfolio Subject tab: one section per APN, each editing that parcel's
+// characteristics. Fields bind to the parcel via `bindRoot`.
+function portfolioSubjectTab() {
+  const parcels = state.portfolio.parcels;
+  return parcels.map((parcel, i) => {
+    const apn = parcel.property?.apn || '—';
+    const addr = parcel.property?.address || '—';
+    const title = `${i === 0 ? 'Main Subject' : 'Associated'} · APN ${apn}`;
+    bindRoot = parcel;
+    const groups = propertySummaryGroups();
+    bindRoot = null;
+    // The shared Effective Age input uses the global data-calc (active parcel);
+    // swap it for a per-parcel one so it tracks this parcel.
+    const effCell = groups[1].querySelector('[data-calc="effAge"]');
+    if (effCell) {
+      effCell.removeAttribute('data-calc');
+      effCell.setAttribute('data-parcel-effage', String(i));
+      effCell.value = fmtNumber(parcelEffAge(parcel));
+    }
+    return section(title, addr, null, ...groups);
+  });
+}
+
+function subjectTab() {
+  const d = state.data;
+  const imp = d.improvements.primary;
+  const { outbuildings } = d.improvements;
 
   // Property Summary — combined site + building characteristics (dense grid)
   const addOutbuilding = () => {
@@ -545,27 +816,7 @@ function subjectTab() {
     refreshComputed();
   };
 
-  const summary = section('Property Summary', null, null,
-    psGroup('Property', [
-      dgCell('Address', denseInput('property.address')),
-      dgCell('Parcel Number', denseInput('property.apn')),
-      dgCell('City', denseInput('property.city')),
-      dgCell('Property Type', denseSelect('improvements.primary.type', TYPE_OPTIONS)),
-    ]),
-    psGroup('Building', [
-      dgCell('Building Area (SF)', denseNum('improvements.primary.grossFloorArea')),
-      dgCell('Leasable Area (SF)', denseNum('improvements.primary.nla')),
-      dgCell('Year Built', denseNum('improvements.primary.yearBuilt')),
-      dgCell('Effective Age', el('input', { class: 'inp', readonly: true, 'data-calc': 'effAge', 'data-fmt': 'num', value: fmtVal(calcValue('effAge'), 'num') })),
-      dgCell('Quality', denseInput('improvements.primary.quality')),
-      dgCell('Condition', denseSelect('improvements.primary.condition', CONDITION_OPTIONS)),
-    ]),
-    psGroup('Land', [
-      dgCell('Site Area (Acres)', denseNum('land.acres')),
-      dgCell('Site Area (SF)', denseNum('land.siteAreaSqFt')),
-      dgCell('Zoning', denseInput('land.zoning')),
-    ]),
-  );
+  const summary = section('Property Summary', null, null, ...propertySummaryGroups());
 
   // Outbuildings
   const obSection = outbuildings.length > 0
@@ -929,10 +1180,13 @@ function compNumField(label, comp, key, opts = {}) {
   const wrap = el('div', { class: 'field' }, el('label', {}, label));
   const box = el('div', { class: 'numwrap' });
   if (opts.prefix) box.append(el('span', { class: 'chip-pre' }, opts.prefix));
-  const input = el('input', { type: 'number', step: 'any' });
-  input.value = Number.isFinite(comp[key]) ? comp[key] : 0;
+  const group = opts.group !== false;
+  const input = el('input', { type: 'text', inputmode: 'decimal' });
+  input.value = Number.isFinite(comp[key])
+    ? (group ? formatCommas(String(comp[key])) : String(comp[key]))
+    : 0;
   input.addEventListener('focus', () => input.select());
-  input.addEventListener('input', () => compSet(comp, { [key]: input.value === '' ? 0 : Number(input.value) }));
+  bindCommaInput(input, (n) => compSet(comp, { [key]: n }), group);
   box.append(input);
   if (opts.suffix) box.append(el('span', { class: 'chip-post' }, opts.suffix));
   wrap.append(box);
@@ -970,7 +1224,7 @@ function compPhotosPanel(comp) {
       const url = resolveCompPhotoUrl(comp, ph);
       const cell = el('div', { class: 'img-thumb' });
       cell.append(url
-        ? el('img', { src: url, alt: `Comp photo ${i + 1}` })
+        ? photoImg(url, `Comp photo ${i + 1}`)
         : el('div', { class: 'img-thumb-ph' }, ph.source === 'gis' ? 'GIS Map' : 'Photo'));
       const rm = el('button', { class: 'btn tiny danger img-thumb-rm' }, 'Remove');
       rm.onclick = () => { comp.photos.splice(i, 1); markDirty(); refreshComputed(); reRender(); };
@@ -995,12 +1249,7 @@ function compPhotosPanel(comp) {
   const uploadFile = (f) => {
     if (!f || !f.type || !f.type.startsWith('image/')) return;
     if (!apn) { toast('Set a parcel # first', true); return; }
-    const fd = new FormData();
-    fd.append('file', f);
-    fetch(`/api/parcel-photos/${encodeURIComponent(apn)}`, { method: 'POST', body: fd })
-      .then(r => r.json())
-      .then(res => { if (res.saved && res.saved[0]) addPhoto({ source: 'upload', file: res.saved[0] }); })
-      .catch(() => toast('Upload failed', true));
+    readPendingPhoto(f, (photo) => addPhoto(photo));
   };
 
   const gisBtn = el('button', { class: 'btn tiny img-mode-btn' }, '🛰 GIS Map');
@@ -1411,7 +1660,9 @@ function tabStatus(tabId) {
   const key = (v) => (v == null ? '' : String(v)).trim();
   let done = false;
   switch (tabId) {
-    case 'cover': done = coverCompletion().done; break;
+    // In a multi-parcel portfolio the Cover tab is the Combined Portfolio
+    // Summary (always populated), so it reads as complete.
+    case 'cover': done = isPortfolio() ? true : coverCompletion().done; break;
     case 'subject':
       done = !!(key(p.address) || key(p.apn) || key(p.legalDescription) || key(d.improvements?.primary?.type));
       break;
@@ -1541,19 +1792,14 @@ function coverTab() {
         ),
         el('div', { class: 'field-group' },
           el('div', { class: 'field-group-label' }, 'Valuation'),
-          el('div', { class: 'field-grid c2' },
+          el('div', { class: 'field-grid c4' },
             numField('Sale Price', 'property.salePrice', { prefix: '$' }),
             numField('Enrolled Value', 'cover.totalPosted', { prefix: '$' }),
-          ),
-        ),
-        el('div', { class: 'field-group' },
-          el('div', { class: 'field-group-label' }, 'Appraiser'),
-          el('div', { class: 'field-grid c2' },
             textField('Appraiser ID', 'property.appraiserId', { placeholder: 'e.g. 677' }),
             textField('Section', 'property.section', { placeholder: 'e.g. Riverside Commercial' }),
           ),
-          areaField('Appraiser Notes', 'property.appraiserNotes', 3),
         ),
+        areaField('Appraiser Notes', 'property.appraiserNotes', 3),
       ),
     );
   } else if (caseType === 'appeal') {
@@ -1725,16 +1971,10 @@ function portfolioSummaryPanel() {
 export function renderForm() {
   const root = document.getElementById('form-root');
   if (!root) return;
-  // Portfolio view: show the combined summary panel instead of the parcel form.
-  if (reportMode() === 'portfolio') {
-    const body = el('div', { class: 'tab-content' });
-    for (const node of portfolioSummaryPanel()) {
-      if (node) body.append(node);
-    }
-    root.replaceChildren(body);
-    document.dispatchEvent(new CustomEvent('form:rendered'));
-    return;
-  }
+  // Multi-parcel portfolios use the same tab set as a single parcel (Cover,
+  // Subject, Sales, Income, Reconcile, Cost). The Cover tab is the Combined
+  // Portfolio Summary; the other tabs edit the active parcel.
+  const isPf = isPortfolio();
   // The Cost tab is only reachable while the cost approach is enabled; if it
   // gets disabled elsewhere, fall back so we never sit on a hidden tab.
   if (activeTab === 'cost' && !hasCostData(state.data)) activeTab = 'reconciliation';
@@ -1752,7 +1992,11 @@ export function renderForm() {
   );
 
   const body = el('div', { class: 'tab-content' });
-  for (const node of TAB_BUILDERS[activeTab]()) {
+  // Portfolio: Cover = Combined Portfolio Summary, Subject = one section per APN.
+  const builders = isPf
+    ? { ...TAB_BUILDERS, cover: portfolioSummaryPanel, subject: portfolioSubjectTab }
+    : TAB_BUILDERS;
+  for (const node of builders[activeTab]()) {
     if (node) body.append(node);
   }
 

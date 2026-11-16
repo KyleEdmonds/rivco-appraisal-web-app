@@ -5,9 +5,10 @@ import {
   state, computeAppraisal, hasCostData, hasIncomeData,
   fmtCurrency, fmtCurrencyRounded, fmtNumber, fmtPct, fmtAcresNum, titleCase, normalizeCity, fmtDate, todayISO,
   generateReconciliationNarrative, resolveSubjectImageUrl, resolveSubjectImageUrls,
-  resolveSubjectPhotoUrls, resolveCoverPhotoUrl, resolveCompPhotoUrls,
+  resolveSubjectPhotoUrls, resolveCoverPhotoUrl, resolveCompPhotoUrls, photoImg,
   computePortfolioAggregate, reportMode,
 } from './core.js';
+import { compositeParcelMap } from './mapimg.js';
 
 function el(tag, attrs = {}, ...children) {
   const node = document.createElement(tag);
@@ -61,7 +62,7 @@ function sheet(page, total, content) {
         el('span', {}, p.appraiserId ? `Prepared by Appraiser #${p.appraiserId}` : 'Prepared by Appraiser'),
         el('span', {}, `Page ${page} of ${total}`),
       ),
-      el('div', { class: 'f-conf' }, `${p.client || 'Confidential'} — Confidential · For official use only`),
+      el('div', { class: 'f-conf' }, p.client || ''),
     ),
   );
 }
@@ -101,6 +102,9 @@ const ADJ_FIELDS = [
   ['adjMarketConditions', 'Market Conditions'],
   ['adjConditionOfSale', 'Condition of Sale'],
 ];
+// Building-related adjustments — dropped from the grid (and the net total) when
+// the subject is vacant land, since there is no building to compare.
+const BUILDING_ADJ = new Set(['adjBuildingSize', 'adjAge', 'adjQuality', 'adjCondition', 'adjLandBldgRatio']);
 
 // --- sheets ------------------------------------------------------------------
 
@@ -222,7 +226,7 @@ function transferCover(d, total) {
   const photo = el('div', { class: `cov-photo${subjUrl ? '' : ' cov-photo-empty'}` },
     el('div', { class: 'cov-photo-cap' }, 'Parcel Satellite Image'),
     subjUrl
-      ? el('img', { src: subjUrl, alt: 'Parcel satellite image' })
+      ? photoImg(subjUrl, 'Parcel satellite image')
       : el('div', { class: 'cov-photo-ph' }, 'No image'),
   );
 
@@ -280,7 +284,7 @@ function generalCover(d, total) {
   const subjectPhoto = el('div', { class: `cov-photo${subjUrl ? '' : ' cov-photo-empty'}` },
     el('div', { class: 'cov-photo-cap' }, 'Parcel Satellite Image'),
     subjUrl
-      ? el('img', { src: subjUrl, alt: 'Parcel satellite image' })
+      ? photoImg(subjUrl, 'Parcel satellite image')
       : el('div', { class: 'cov-photo-ph' }, 'No image'),
   );
 
@@ -498,15 +502,41 @@ function salesSheet(d, comp) {
   const s = d.sales;
   const comps = s.comparables;
 
-  const subjectSF = imp.grossFloorArea || 0;
-  const subjectAcres = (land.siteAreaSqFt || 0) / 43560;
-  const subjectRatio = subjectSF > 0 ? (land.siteAreaSqFt || 0) / subjectSF : 0;
+  // Portfolio: the subject is the combined property — use the summary totals
+  // (summed building/site area) and the APN range for the subject column.
+  const isPf = reportMode() === 'portfolio';
+  const agg = isPf ? computePortfolioAggregate(state.portfolio.parcels) : null;
+  const pfApns = isPf
+    ? state.portfolio.parcels.map((x) => x.property?.apn).filter(Boolean)
+      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+    : [];
+  const apnLabel = isPf
+    ? (pfApns.length > 1 ? `${pfApns[0]} – ${pfApns[pfApns.length - 1]}` : (pfApns[0] || p.apn))
+    : p.apn;
+
+  const subjectSF = isPf ? agg.totalSqft : (imp.grossFloorArea || 0);
+  const subjectSiteSqFt = isPf ? agg.totalSiteSqFt : (land.siteAreaSqFt || 0);
+  const subjectAcres = subjectSiteSqFt / 43560;
+  const subjectRatio = subjectSF > 0 ? subjectSiteSqFt / subjectSF : 0;
+  // Vacant land: the subject has no building, so the grid drops building
+  // characteristics and prices on land area ($/land SF and $/land acre).
+  const isVacant = /vacant/i.test(imp.type || '');
   const compValues = comps.map((c) => {
     const unadjSF = c.buildingArea > 0 ? c.price / c.buildingArea : 0;
-    const net = ADJ_FIELDS.reduce((sum, [f]) => sum + (Number(c[f]) || 0), 0);
+    // Net adjustment: for vacant land, exclude building-related adjustments so
+    // the total matches the rows actually shown in the grid.
+    const net = ADJ_FIELDS
+      .filter(([f]) => !isVacant || !BUILDING_ADJ.has(f))
+      .reduce((sum, [f]) => sum + (Number(c[f]) || 0), 0);
     const adjSF = unadjSF * (1 + net / 100);
     const ratio = c.buildingArea > 0 ? (c.landArea || 0) * 43560 / c.buildingArea : 0;
-    return { unadjSF, net, adjSF, ratio };
+    // Land-based metrics (used when the subject is vacant land).
+    const landSF = (c.landArea || 0) * 43560;
+    const unadjLandSF = landSF > 0 ? c.price / landSF : 0;
+    const unadjLandAcre = (c.landArea || 0) > 0 ? c.price / c.landArea : 0;
+    const adjLandSF = unadjLandSF * (1 + net / 100);
+    const adjLandAcre = unadjLandAcre * (1 + net / 100);
+    return { unadjSF, net, adjSF, ratio, unadjLandSF, unadjLandAcre, adjLandSF, adjLandAcre };
   });
   const pct = (v) => (v !== 0 ? `${v > 0 ? '' : '-'}${Math.abs(v)}%` : '');
   const compAge = imp.yearBuilt ? String(new Date().getFullYear() - imp.yearBuilt) : '—';
@@ -524,19 +554,19 @@ function salesSheet(d, comp) {
     );
   };
 
-  const table = el('table', { class: 'sales-grid' },
-    el('thead', {}, el('tr', {},
-      el('th', {}, 'Description'),
-      el('th', {}, 'Subject'),
-      comps.map((c, i) => el('th', {}, `Comp ${i + 1}`)),
-    )),
-    el('tbody', {},
-      row('Parcel #', p.apn, comps.map((c) => c.parcel || '—')),
-      row('Property Type', imp.type, comps.map((c) => c.propertyType || '—')),
-      row('Location', p.address, comps.map((c) => c.address || '—')),
-      row('City', normalizeCity(p.city), comps.map((c) => normalizeCity(c.city) || '—')),
-      // Year built: prefer the comp's stored value (transfer comps carry it);
-      // otherwise derive it from the comp's age.
+  // Build the body rows. Vacant land drops the building characteristics
+  // (Year Built, Age, Quality, Condition, Building Area, Land to Bldg. Ratio)
+  // and prices on land area instead of building area.
+  const bodyRows = [
+    row('Parcel #', apnLabel, comps.map((c) => c.parcel || '—')),
+    row('Property Type', imp.type, comps.map((c) => c.propertyType || '—')),
+    row('Location', p.address, comps.map((c) => c.address || '—')),
+    row('City', normalizeCity(p.city), comps.map((c) => normalizeCity(c.city) || '—')),
+  ];
+  if (!isVacant) {
+    // Year built: prefer the comp's stored value (transfer comps carry it);
+    // otherwise derive it from the comp's age.
+    bodyRows.push(
       row('Year Built', (imp.yearBuilt || 0) > 0 ? String(imp.yearBuilt) : '—', comps.map((c) => {
         const yb = (c.yearBuilt || 0) > 0 ? c.yearBuilt : (c.age > 0 ? new Date().getFullYear() - c.age : 0);
         return yb > 0 ? String(yb) : '—';
@@ -544,33 +574,102 @@ function salesSheet(d, comp) {
       row('Age', compAge, comps.map((c) => (c.age > 0 ? String(c.age) : '—'))),
       row('Quality', imp.quality, comps.map((c) => c.quality || '—')),
       row('Condition', imp.condition, comps.map((c) => c.condition || '—')),
-      row('Land Area (Acres)', subjectAcres > 0 ? subjectAcres.toFixed(2) : '—', comps.map((c) => (c.landArea > 0 ? c.landArea.toFixed(2) : '—'))),
+    );
+  }
+  bodyRows.push(
+    row('Land Area (Acres)', subjectAcres > 0 ? subjectAcres.toFixed(2) : '—', comps.map((c) => (c.landArea > 0 ? c.landArea.toFixed(2) : '—'))),
+  );
+  if (!isVacant) {
+    bodyRows.push(
       row('Building Area (SF)', subjectSF > 0 ? fmtNumber(subjectSF) : '—', comps.map((c) => (c.buildingArea > 0 ? fmtNumber(c.buildingArea) : '—'))),
       row('Land to Bldg. Ratio', subjectRatio > 0 ? subjectRatio.toFixed(2) : '—', compValues.map((v) => (v.ratio > 0 ? v.ratio.toFixed(2) : '—'))),
-      // Transfers: the subject's own transfer date (effective date, matching
-      // the cover's "Date of Transfer") and cash-equivalent sale price.
-      row('Transfer Date', (p.caseType || 'transfer') === 'transfer' && p.effectiveDate ? fmtDate(p.effectiveDate) : '', comps.map((c) => (c.saleDate ? fmtDate(c.saleDate) : '—'))),
-      row('Cash Eq. Sale Price', (p.caseType || 'transfer') === 'transfer' && (p.salePrice || 0) > 0 ? fmtCurrency(p.salePrice) : '', comps.map((c) => (c.price > 0 ? fmtCurrency(c.price) : '—'))),
-      row('UNADJUSTED VALUE INDICATORS', null, [], { section: true }),
+    );
+  }
+  // Transfers: the subject's own transfer date (effective date, matching
+  // the cover's "Date of Transfer") and cash-equivalent sale price.
+  bodyRows.push(
+    row('Transfer Date', (p.caseType || 'transfer') === 'transfer' && p.effectiveDate ? fmtDate(p.effectiveDate) : '', comps.map((c) => (c.saleDate ? fmtDate(c.saleDate) : '—'))),
+    row('Cash Eq. Sale Price', (p.caseType || 'transfer') === 'transfer' && (p.salePrice || 0) > 0 ? fmtCurrency(p.salePrice) : '', comps.map((c) => (c.price > 0 ? fmtCurrency(c.price) : '—'))),
+    row('UNADJUSTED VALUE INDICATORS', null, [], { section: true }),
+  );
+  if (isVacant) {
+    bodyRows.push(
+      row('Unadjusted $/Land SF', '', compValues.map((v) => (v.unadjLandSF > 0 ? v.unadjLandSF.toFixed(2) : '—'))),
+      row('Unadjusted $/Land Acre', '', compValues.map((v) => (v.unadjLandAcre > 0 ? v.unadjLandAcre.toFixed(2) : '—'))),
+    );
+  } else {
+    bodyRows.push(
       row('Unadjusted Price / SF', '', compValues.map((v) => (v.unadjSF > 0 ? v.unadjSF.toFixed(2) : '—'))),
-      row('Market Conditions', '', comps.map((c) => pct(c.adjMarketConditions))),
-      row('Condition of Sale', '', comps.map((c) => pct(c.adjConditionOfSale))),
+    );
+  }
+  bodyRows.push(
+    row('Market Conditions', '', comps.map((c) => pct(c.adjMarketConditions))),
+    row('Condition of Sale', '', comps.map((c) => pct(c.adjConditionOfSale))),
+  );
+  if (isVacant) {
+    bodyRows.push(
+      row('Adjusted $/Land SF', '', compValues.map((v) => (v.adjLandSF > 0 ? v.adjLandSF.toFixed(2) : '—'))),
+      row('Adjusted $/Land Acre', '', compValues.map((v) => (v.adjLandAcre > 0 ? v.adjLandAcre.toFixed(2) : '—'))),
+    );
+  } else {
+    bodyRows.push(
       row('Adjusted Price / SF', '', compValues.map((v) => (v.adjSF > 0 ? v.adjSF.toFixed(2) : '—'))),
-      row('COMPARABILITY ADJUSTMENTS (%)', null, [], { section: true }),
-      ...ADJ_FIELDS.slice(0, 10).map(([f, label]) => row(label, '', comps.map((c) => pct(c[f])))),
-      row('NET ADJUSTMENTS', '', compValues.map((v) => (v.net !== 0 ? pct(v.net) : '0%')), { bold: true }),
-      row('FINAL', null, [], { section: true }),
+    );
+  }
+  // Building-related adjustments are dropped for vacant land (no building to
+  // compare). Market Conditions / Condition of Sale are shown above, so the
+  // grid lists the first ten adjustment fields.
+  const adjRows = ADJ_FIELDS.slice(0, 10)
+    .filter(([f]) => !isVacant || !BUILDING_ADJ.has(f))
+    .map(([f, label]) => row(label, '', comps.map((c) => pct(c[f]))));
+  bodyRows.push(
+    row('COMPARABILITY ADJUSTMENTS (%)', null, [], { section: true }),
+    ...adjRows,
+    row('NET ADJUSTMENTS', '', compValues.map((v) => (v.net !== 0 ? pct(v.net) : '0%')), { bold: true }),
+    row('FINAL', null, [], { section: true }),
+  );
+  if (isVacant) {
+    bodyRows.push(
+      row('Adj. $/Land SF', '', compValues.map((v) => (v.adjLandSF > 0 ? v.adjLandSF.toFixed(2) : '—')), { bold: true }),
+      row('Adj. $/Land Acre', '', compValues.map((v) => (v.adjLandAcre > 0 ? v.adjLandAcre.toFixed(2) : '—')), { bold: true }),
+    );
+  } else {
+    bodyRows.push(
       row('Adj. Price / SF', '', compValues.map((v) => (v.adjSF > 0 ? v.adjSF.toFixed(2) : '—')), { bold: true }),
-    ),
+    );
+  }
+
+  const table = el('table', { class: 'sales-grid' },
+    el('thead', {}, el('tr', {},
+      el('th', {}, 'Description'),
+      el('th', {}, 'Subject'),
+      comps.map((c, i) => el('th', {}, `Comp ${i + 1}`)),
+    )),
+    el('tbody', {}, ...bodyRows),
   );
 
+  // Correlated value. Vacant land: average the adjusted $/land SF across comps
+  // and apply it to the subject's land area. Otherwise use the (portfolio-summed
+  // or per-parcel) sales value expressed over the building area.
+  let totalSales, corrLabel;
+  if (isVacant) {
+    const validLand = compValues.filter((v) => v.adjLandSF > 0);
+    const corrLandSF = validLand.length > 0
+      ? validLand.reduce((s, v) => s + v.adjLandSF, 0) / validLand.length
+      : 0;
+    totalSales = corrLandSF * subjectSiteSqFt;
+    corrLabel = `SUBJECT CORRELATED VALUE: $${corrLandSF.toFixed(2)}/land SF × ${fmtNumber(subjectSiteSqFt)} SF`;
+  } else {
+    totalSales = isPf ? agg.totalSalesValue : comp.sales.valueBySales;
+    const corrSF = subjectSF > 0 ? totalSales / subjectSF : comp.sales.correlatedSF;
+    corrLabel = `SUBJECT CORRELATED VALUE: $${corrSF.toFixed(2)}/SF × ${fmtNumber(subjectSF)} SF`;
+  }
   return el('div', {},
     heading('Sales Comparison Approach'),
     el('div', { class: 'sales-grid-wrap' }, table),
     el('div', { class: 'sales-correlated' },
-      el('span', { class: 'sc-left' },
-        `SUBJECT CORRELATED VALUE: $${comp.sales.correlatedSF.toFixed(2)}/SF × ${fmtNumber(comp.sales.subjectSF)} SF`),
-      el('span', { class: 'sc-right' }, fmtCurrency(comp.sales.valueBySales)),
+      el('span', { class: 'sc-left' }, corrLabel),
+      el('span', { class: 'sc-right' }, fmtCurrency(totalSales)),
     ),
     d.sales.remarks ? el('p', { class: 'notes' }, d.sales.remarks) : null,
   );
@@ -690,7 +789,7 @@ function subjectPropertySheet(d) {
   const photosBox = covBox('Subject Photos',
     photos.length > 0
       ? el('div', { class: `cov-photos${photos.length === 1 ? ' single' : ''}` },
-          ...photos.map((url, i) => el('div', { class: 'cov-photo-cell' }, el('img', { src: url, alt: `Subject photo ${i + 1}` }))))
+          ...photos.map((url, i) => el('div', { class: 'cov-photo-cell' }, photoImg(url, `Subject photo ${i + 1}`))))
       : el('div', { class: 'cov-photos-empty' }, 'No photos'),
   );
 
@@ -744,7 +843,7 @@ function compDetailSheets(d) {
     const photosBox = covBox('Photos',
       photos.length > 0
         ? el('div', { class: `cov-photos${photos.length === 1 ? ' single' : ''}` },
-            ...photos.map((url, j) => el('div', { class: 'cov-photo-cell' }, el('img', { src: url, alt: `Comp ${i + 1} photo ${j + 1}` }))))
+            ...photos.map((url, j) => el('div', { class: 'cov-photo-cell' }, photoImg(url, `Comp ${i + 1} photo ${j + 1}`))))
         : el('div', { class: 'cov-photos-empty' }, 'No photos'),
     );
 
@@ -764,7 +863,7 @@ function mapSheet(d) {
   const comps = d.sales.comparables || [];
   const subjUrl = resolveSubjectImageUrl(d);
   const img = subjUrl
-    ? el('div', { class: 'img-cell' }, el('img', { src: subjUrl, alt: 'Map' }))
+    ? el('div', { class: 'img-cell' }, photoImg(subjUrl, 'Map'))
     : el('div', { class: 'img-cell empty' }, el('div', { class: 'img-cap' }, 'No map'));
   return [
     heading('Map of Comparable Sales'),
@@ -813,6 +912,66 @@ function parcelIntersection(p) {
   // No address, no geocoded street, no legal intersection → "No Situs".
   // (Coordinates are intentionally NOT shown in the report.)
   return ld || 'No Situs';
+}
+
+// Subject page for a multi-parcel portfolio: a combined summary of each
+// parcel's characteristics (one row per APN, listed first → last) plus a final
+// combined row (APN range + summed numeric characteristics).
+function portfolioSubjectSheet(agg) {
+  const parcels = state.portfolio.parcels;
+  // List APNs first → last (numeric-aware ascending).
+  const sorted = [...parcels].sort((a, b) =>
+    String(a.property?.apn || '').localeCompare(String(b.property?.apn || ''), undefined, { numeric: true }));
+  const gfaOf = (p) => (p.improvements?.primary?.grossFloorArea ?? 0) +
+    (p.improvements?.outbuildings ?? []).reduce((s, o) => s + (o?.grossFloorArea ?? 0), 0);
+  const effAge = (p) => {
+    const yb = p.improvements?.primary?.yearBuilt;
+    const ed = p.property?.effectiveDate;
+    return yb && ed ? String(parseInt(String(ed).slice(0, 4), 10) - yb) : '';
+  };
+  const apns = sorted.map((p) => p.property?.apn).filter(Boolean);
+  const apnRange = apns.length > 1 ? `${apns[0]} – ${apns[apns.length - 1]}` : (apns[0] || '—');
+  const rows = sorted.map((p, i) => {
+    const pr = p.property || {};
+    const b = p.improvements?.primary || {};
+    const l = p.land || {};
+    return [
+      i + 1,
+      pr.apn || '—',
+      [titleCase(pr.address), pr.zip].filter(Boolean).join(', ') || '—',
+      normalizeCity(pr.city) || '—',
+      b.type || '—',
+      gfaOf(p) > 0 ? fmtNumber(gfaOf(p)) : '—',
+      l.siteAreaSqFt > 0 ? fmtNumber(l.siteAreaSqFt) : '—',
+      l.acres > 0 ? fmtAcresNum(l.acres) : '—',
+      b.quality || '—',
+      b.yearBuilt || '—',
+      effAge(p) || '—',
+      b.condition || '—',
+      l.zoning || '—',
+    ];
+  });
+  // Final combined row: APN range + summed numeric characteristics.
+  const totalGfa = sorted.reduce((s, p) => s + gfaOf(p), 0);
+  const totalSite = sorted.reduce((s, p) => s + (p.land?.siteAreaSqFt ?? 0), 0);
+  const totalAcres = totalSite / 43560;
+  rows.push([
+    el('strong', {}, 'Total'),
+    el('strong', {}, apnRange),
+    '', '', '',
+    el('strong', {}, totalGfa > 0 ? fmtNumber(totalGfa) : '—'),
+    el('strong', {}, totalSite > 0 ? fmtNumber(totalSite) : '—'),
+    el('strong', {}, totalAcres > 0 ? fmtAcresNum(totalAcres) : '—'),
+    '', '', '', '', '',
+  ]);
+  return el('div', {},
+    portfolioBanner(agg),
+    heading('Subject Property — Combined Characteristics'),
+    table(
+      ['#', 'APN', 'Address', 'City', 'Property Type', 'Building (SF)', 'Site (SF)', 'Acres', 'Quality', 'Year Built', 'Eff. Age', 'Condition', 'Zoning'],
+      rows,
+    ),
+  );
 }
 
 function portfolioCoverView(agg) {
@@ -945,7 +1104,7 @@ export function renderReport() {
     const agg = computePortfolioAggregate(state.portfolio.parcels);
     const pfCover = portfolioCoverView(agg);
     const bodySheets = [
-      { section: 'subject', content: subjectPropertySheet(d, comp) },
+      { section: 'subject', content: portfolioSubjectSheet(agg) },
       { section: 'sales', content: salesSheet(d, comp) },
       ...compDetailSheets(d, comp).map((c) => ({ section: 'sales', content: c })),
       { section: 'subject', content: mapSheet(d, comp) },
@@ -962,14 +1121,14 @@ export function renderReport() {
     if (meta) meta.textContent = `${total} sheets · 8.5×11`;
     fitSheets();
     updateTopBar();
-    // Load the combined parcel map image (async).
+    // Load the combined parcel map image (composited in the browser).
     root.querySelectorAll('.pf-map[data-apns]').forEach((box) => {
       const apns = box.dataset.apns;
       box.innerHTML = `<div class="pin-map-canvas pin-map-loading">Loading combined parcel map…</div>`;
-      fetch(`/api/parcel-image/multi?apns=${encodeURIComponent(apns)}`)
-        .then((r) => r.ok ? r : Promise.reject(new Error('unavailable')))
-        .then(() => {
-          box.innerHTML = `<div class="pin-map-canvas"><img class="pin-map-img" src="/api/parcel-image/multi?apns=${encodeURIComponent(apns)}" alt="Combined parcel map"></div><div class="pin-map-cap"><span>Portfolio Map · ${apns.split(',').length} parcels · satellite</span><span class="pin-map-cap-right"><span class="pin-map-attr">Imagery © Esri/World Imagery</span></span></div>`;
+      compositeParcelMap(apns)
+        .then((dataUrl) => {
+          if (!dataUrl) { box.innerHTML = `<div class="pin-map-canvas pin-map-loading">Combined map unavailable.</div>`; return; }
+          box.innerHTML = `<div class="pin-map-canvas"><img class="pin-map-img" src="${dataUrl}" alt="Combined parcel map"></div><div class="pin-map-cap"><span>Portfolio Map · ${apns.split(',').length} parcels · satellite</span><span class="pin-map-cap-right"><span class="pin-map-attr">Imagery © Esri/World Imagery</span></span></div>`;
         })
         .catch(() => { box.innerHTML = `<div class="pin-map-canvas pin-map-loading">Combined map unavailable.</div>`; });
     });

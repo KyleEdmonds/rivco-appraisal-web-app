@@ -2,6 +2,8 @@
 // core.js — calculations, model, API, state (ported from src/lib + src/data)
 // ---------------------------------------------------------------------------
 
+import { compositeParcelMap } from './mapimg.js';
+
 const SQFT_PER_ACRE = 43560;
 const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
 // Coerce to a finite number (county data arrives as strings like "1.760").
@@ -212,7 +214,11 @@ export function computeAppraisal(data) {
     return {
       landAcres: round2(landAcres),
       cost, income, sales, reconciliation,
-      totalAssessed: roundTo5000(data.reconciliation.finalValue || reconciliation.weightedValue),
+      // Total Assessed matches the Enrolled Value (cover.totalPosted) when it's
+      // set; otherwise it falls back to the computed final/weighted value.
+      totalAssessed: safe(data.cover?.totalPosted) > 0
+        ? data.cover.totalPosted
+        : roundTo5000(data.reconciliation.finalValue || reconciliation.weightedValue),
     };
   } catch {
     return ZERO_COMPUTED;
@@ -448,15 +454,57 @@ export function normalizeParcel(parcel) {
   };
 }
 
+// --- GIS (satellite) photo resolution ---------------------------------------
+// GIS photos are composited in the browser (see mapimg.js) instead of being
+// rendered server-side. The resolve*() functions return a lightweight marker
+// for a GIS photo so the report/panels render instantly; photoImg()/
+// loadGisImage() then swap in the composited data URL once it's ready (cached
+// per APN in mapimg.js).
+export const GIS_MARKER = 'gis:';
+const gisUrl = (apn) => GIS_MARKER + encodeURIComponent(String(apn).trim());
+
+// Swap a GIS marker into a real composited satellite data URL on an <img>.
+// No-op for non-GIS urls. Best-effort: on failure (no geometry / imagery) the
+// image element is removed.
+export async function loadGisImage(imgEl, url) {
+  if (!imgEl || typeof url !== 'string' || !url.startsWith(GIS_MARKER)) return;
+  const apn = decodeURIComponent(url.slice(GIS_MARKER.length));
+  try {
+    const dataUrl = await compositeParcelMap(apn);
+    if (dataUrl) imgEl.src = dataUrl;
+    else imgEl.remove();
+  } catch { imgEl.remove(); }
+}
+
+// Create an <img> for a resolved photo url. GIS markers get a placeholder and
+// are filled in asynchronously by loadGisImage; other urls are set directly.
+export function photoImg(url, alt = '') {
+  const img = document.createElement('img');
+  img.alt = alt;
+  if (typeof url === 'string' && url.startsWith(GIS_MARKER)) {
+    img.src = ''; // placeholder; loadGisImage fills it (avoids a broken image)
+    loadGisImage(img, url);
+  } else {
+    img.src = url;
+  }
+  return img;
+}
+
 // --- subject image resolution -------------------------------------------------
 // Resolves a single photo reference to a displayable URL.
-//   { source: "gis" }              → /api/parcel-image/{apn}
+//   { source: "gis" }              → a GIS marker (composited in the browser)
 //   { source: "upload", file }     → /api/parcel-photos/{apn}/{file}
+//   { source: "map", dataUrl }     → the data URL (Google map, stays local)
 //   null / undefined               → null (no image)
 export function resolvePhotoUrl(data, photo) {
   const p = data?.property;
   if (!p || !photo) return null;
-  if (photo.source === 'gis' && p.apn) return `/api/parcel-image/${encodeURIComponent(p.apn)}`;
+  // Pending photo (not yet finalized): the image is a base64 data URL kept in
+  // the appraisal data. 'upload' photos are uploaded to the parcel page on
+  // finalize; 'map' photos (Google Static Map) stay with the report on the
+  // user's PC and are never uploaded.
+  if (photo.dataUrl) return photo.dataUrl;
+  if (photo.source === 'gis' && p.apn) return gisUrl(p.apn);
   if (photo.source === 'upload' && p.apn && photo.file)
     return `/api/parcel-photos/${encodeURIComponent(p.apn)}/${encodeURIComponent(photo.file)}`;
   return null;
@@ -471,25 +519,25 @@ export function resolveSubjectImageUrls(data) {
   return photos.map((ph) => resolvePhotoUrl(data, ph)).filter(Boolean);
 }
 
-// Resolves the subject's explicit photos (uploads only — never the GIS
-// satellite, which belongs to the cover) to displayable URLs. Combines the
+// Resolves the subject's explicit photos (uploads and Google maps — never the
+// GIS satellite, which belongs to the cover) to displayable URLs. Combines the
 // legacy single subjectImage with the subjectPhotos list, deduped.
-// Returns [] when there are no uploaded photos.
+// Returns [] when there are no explicit photos.
 export function resolveSubjectPhotoUrls(data) {
   const p = data?.property;
   if (!p) return [];
   const urls = [];
   const push = (u) => { if (u && !urls.includes(u)) urls.push(u); };
-  if (p.subjectImage && p.subjectImage.source === 'upload') push(resolvePhotoUrl(data, p.subjectImage));
+  if (p.subjectImage && p.subjectImage.source !== 'gis') push(resolvePhotoUrl(data, p.subjectImage));
   for (const ph of Array.isArray(p.subjectPhotos) ? p.subjectPhotos : []) {
-    if (ph && ph.source === 'upload') push(resolvePhotoUrl(data, ph));
+    if (ph && ph.source !== 'gis') push(resolvePhotoUrl(data, ph));
   }
   return urls;
 }
 
 // Resolves the legacy single subjectImage reference to a displayable URL.
 // Kept for the cover's satellite fallback and the map sheet.
-//   { source: "gis" }              → /api/parcel-image/{apn}
+//   { source: "gis" }              → a GIS marker (composited in the browser)
 //   { source: "upload", file }     → /api/parcel-photos/{apn}/{file}
 //   legacy base64 data URL         → returned as-is (migration path)
 //   null / undefined               → null (no image)
@@ -509,7 +557,7 @@ export function resolveCoverPhotoUrl(data) {
   const p = data?.property;
   if (!p) return null;
   if (p.subjectImage && p.subjectImage.source === 'none') return null;
-  return resolveSubjectImageUrl(data) || (p.apn ? `/api/parcel-image/${encodeURIComponent(p.apn)}` : null);
+  return resolveSubjectImageUrl(data) || (p.apn ? gisUrl(p.apn) : null);
 }
 
 // --- comp image resolution ----------------------------------------------------
@@ -518,7 +566,9 @@ export function resolveCoverPhotoUrl(data) {
 export function resolveCompPhotoUrl(comp, photo) {
   const apn = String(comp?.parcel || '').trim();
   if (!apn || !photo) return null;
-  if (photo.source === 'gis') return `/api/parcel-image/${encodeURIComponent(apn)}`;
+  // Pending photo (not yet finalized): base64 data URL in the appraisal data.
+  if (photo.dataUrl) return photo.dataUrl;
+  if (photo.source === 'gis') return gisUrl(apn);
   if (photo.source === 'upload' && photo.file)
     return `/api/parcel-photos/${encodeURIComponent(apn)}/${encodeURIComponent(photo.file)}`;
   return null;
@@ -601,7 +651,19 @@ export async function saveCurrent() {
     const { id } = await api.createAppraisal(portfolioPayload());
     state.id = id;
   } else {
-    await api.updateAppraisal(state.id, portfolioPayload());
+    try {
+      await api.updateAppraisal(state.id, portfolioPayload());
+    } catch (e) {
+      // Stale id: the server row no longer exists (e.g. this WIP was deleted on
+      // the server / another machine after we loaded it). The PUT 404s, so fall
+      // back to creating a fresh appraisal so the save still succeeds.
+      if (e && e.message && e.message.startsWith('404')) {
+        const { id } = await api.createAppraisal(portfolioPayload());
+        state.id = id;
+      } else {
+        throw e;
+      }
+    }
   }
   state.dirty = false;
   return state.id;
@@ -648,10 +710,11 @@ export function activeParcelIndex() {
   return clampIndex(state.portfolio.activeParcelIndex, state.portfolio.parcels.length);
 }
 
-// The report mode: portfolio views only when there are multiple parcels AND the
-// user is in portfolio view mode.
+// The report mode: a multi-parcel appraisal always presents as a portfolio
+// (portfolio cover + standard body sections). `viewMode` is kept for
+// serialization/back-compat but no longer drives the UI.
 export function reportMode() {
-  return state.viewMode === 'portfolio' && isPortfolio() ? 'portfolio' : 'parcel';
+  return isPortfolio() ? 'portfolio' : 'parcel';
 }
 
 export function selectParcel(index) {
@@ -843,8 +906,11 @@ function workspaceSnapshot() {
 
 let localSaveTimer = null;
 
-export function scheduleAutosave() {
-  if (!state.dirty) return;
+// `force` bypasses the dirty check — workspace structure changes (opening /
+// closing tabs) must be persisted even when the active appraisal is clean,
+// otherwise a reload restores a stale tab list.
+export function scheduleAutosave(force = false) {
+  if (!state.dirty && !force) return;
   if (localSaveTimer) clearTimeout(localSaveTimer);
   localSaveTimer = setTimeout(runLocalSave, 800);
 }

@@ -171,29 +171,32 @@ input, select, textarea { font-family: inherit; }
 .tb-apn .apn-box input::placeholder { color: rgba(255,255,255,0.4); }
 .tb-apn .apn-count { color: rgba(255,255,255,0.5); border-left-color: rgba(255,255,255,0.2); }
 /* center: case type selector (dead center) */
-/* right: headline, value, actions */
-.tb-right { display: flex; align-items: center; gap: 12px; flex: 1 1 auto; justify-content: flex-end; }
-.tb-headline { text-align: right; line-height: 1.3; min-width: 0; flex: 0 1 auto; overflow: hidden; max-width: 200px; }
-.tb-headline .addr { font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
-.tb-headline .sub { font-size: 10px; color: rgba(255,255,255,0.5); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tb-value { text-align: right; line-height: 1.3; flex: 0 0 auto; }
-.tb-value .label { font-size: 9px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--gold-light); font-weight: 700; white-space: nowrap; }
-.tb-value .num { font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--accent-bright); letter-spacing: 0.01em; }
+/* center: headline + total assessed */
+.tb-center { display: flex; align-items: center; justify-content: center; gap: 24px; flex: 1 1 auto; min-width: 0; }
+/* right: actions */
+.tb-right { display: flex; align-items: center; gap: 12px; flex: 0 0 auto; justify-content: flex-end; }
+.tb-headline { text-align: center; line-height: 1.3; min-width: 0; flex: 0 1 auto; overflow: hidden; max-width: 340px; }
+.tb-headline .addr { font-size: 16px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.tb-headline .sub { font-size: 12px; color: rgba(255,255,255,0.5); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tb-value { text-align: center; line-height: 1.3; flex: 0 0 auto; }
+.tb-value .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--gold-light); font-weight: 700; white-space: nowrap; }
+.tb-value .num { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--accent-bright); letter-spacing: 0.01em; }
 .tb-group { display: flex; align-items: center; gap: 6px; }
 /* Landing page: hide the appraisal headline/total (they don't apply), but keep
    the WIP / Final Archive buttons visible. */
 #topbar.tb-landing .tb-headline,
 #topbar.tb-landing .tb-value,
 #topbar.tb-landing .tb-sep,
-#topbar.tb-landing #btn-save-wip,
 #topbar.tb-landing #btn-finalize,
+#topbar.tb-landing #btn-save-wip,
+#topbar.tb-landing #btn-archive,
 #topbar.tb-landing #btn-home { display: none; }
 #topbar.tb-appraisal #btn-report { display: none; }
 
 /* --- responsive breakpoints --- */
 @media (max-width: 1399px) {
-  .tb-headline { max-width: 160px; }
-  .tb-headline .addr { max-width: 140px; }
+  .tb-headline { max-width: 240px; }
+  .tb-headline .addr { max-width: 220px; }
   .tb-value .label { display: none; }
 }
 @media (max-width: 1099px) {
@@ -1589,10 +1592,10 @@ textarea.inp { height: auto; padding: 8px 10px; resize: vertical; line-height: 1
 .sheet-body .cov-stack { padding: 0; }
 .cov-stack .cov-box:last-child { flex: 1 1 auto; min-height: 0; }
 .cov-stack .cov-box:last-child .cov-body { flex: 1 1 auto; min-height: 0; }
-/* Subject photos — a grid of one or more photos that fills the box. A single
-   photo is shown full (contained); multiple photos tile as uniform thumbnails. */
-.cov-photos { flex: 1; min-height: 0; display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); grid-auto-rows: 1fr; }
-.cov-photos.single { grid-template-columns: 1fr; }
+/* Subject photos — stacked vertically, one photo per row, filling the box.
+   A single photo is shown full (contained); multiple photos each fill their
+   own row (cover). */
+.cov-photos { flex: 1; min-height: 0; display: grid; gap: 10px; grid-template-columns: 1fr; grid-auto-rows: 1fr; }
 .cov-photo-cell { border: 1px solid var(--border-soft); background: #fff; display: flex; align-items: center; justify-content: center; min-height: 0; overflow: hidden; }
 .cov-photo-cell img { width: 100%; height: 100%; object-fit: cover; }
 .cov-photos.single .cov-photo-cell img { object-fit: contain; }
@@ -1873,6 +1876,9 @@ textarea.inp { height: auto; padding: 8px 10px; resize: vertical; line-height: 1
 @media print {
   @page { size: letter; margin: 0; }
   html, body {
+    /* The on-screen body is a fixed-height, overflow-hidden flex column; reset
+       it to a plain block flow so the report prints as a clean document. */
+    display: block;
     width: 100%; height: auto; overflow: visible; background: #fff;
     /* Force backgrounds (navy headers, gold accents) to print even if the
        browser's default is to strip them. */
@@ -2022,10 +2028,10 @@ textarea.inp { height: auto; padding: 8px 10px; resize: vertical; line-height: 1
 .landing-date:focus { outline: none; border-color: var(--accent); box-shadow: var(--focus-ring); }
 .landing-cards {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
   width: 100%;
-  max-width: 760px;
+  max-width: 920px;
 }
 .landing-card {
   display: flex;
@@ -2141,10 +2147,6 @@ textarea.inp { height: auto; padding: 8px 10px; resize: vertical; line-height: 1
 /* Archive view: WIP / Final toggle buttons. */
 .archive-toggle { display: inline-flex; gap: 6px; }
 .archive-toggle .btn { padding: 4px 14px; font-size: 12px; font-weight: 600; }
-/* Archive view: case-type section tabs (Transfers / Appeals / Stipulations /
-   General). Same look as the WIP/Final toggle. */
-.archive-case-tabs { display: inline-flex; gap: 6px; margin-left: 12px; }
-.archive-case-tabs .btn { padding: 4px 12px; font-size: 12px; font-weight: 600; }
 .list-table {
   width: 100%;
   border-collapse: collapse;
@@ -2520,6 +2522,16 @@ tr.tq-done td { color: #94a3b8; }
 }
 .pin-photo-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .pin-photo-thumb:hover { border-color: var(--navy); }
+.pin-photo-rm {
+  position: absolute; top: 3px; right: 3px;
+  width: 18px; height: 18px; line-height: 1;
+  padding: 0; font-size: 12px; font-weight: 700;
+  border: 1px solid var(--border-soft); border-radius: 50%;
+  background: rgba(255, 255, 255, 0.9); color: var(--muted);
+  cursor: pointer; opacity: 0; transition: opacity 0.15s, background 0.15s, color 0.15s;
+}
+.pin-photo-thumb:hover .pin-photo-rm { opacity: 1; }
+.pin-photo-rm:hover { background: #dc2626; border-color: #dc2626; color: #fff; }
 .pin-photos-empty { grid-column: 1 / -1; }
 /* Photo lightbox. */
 .photo-lightbox {
