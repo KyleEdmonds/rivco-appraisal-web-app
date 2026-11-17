@@ -11,20 +11,25 @@ frontend, SQLite persistence.
 | Path | Purpose |
 |------|---------|
 | `AppraisalWeb.csproj` | .NET 10 web project (excludes `share/`, `storage/`, `output/` from build) |
-| `Program.cs` | Backend entry point: minimal API routes + SQLite document store |
+| `Program.cs` | Backend entry point: minimal API routes + SQLite document store + parcel index |
 | `Rule2.cs` | Rule 2 (Full Cash Value) transfer-screening batch (`RivCo.Rule2`) |
 | `Models/` | **Typed C# data structures** (Property, Appraisal, Comp, Tenant) — `RivCo.Models` |
 | `start.bat` | Launcher (`dotnet run`) |
 | `wwwroot/index.html` | SPA shell (boot-error boundary + module entry) |
 | `wwwroot/css/app.css` | Single custom stylesheet — design system via CSS custom properties |
 | `wwwroot/js/core.js` | Calculations, data model (`createEmptyParcel`), API client, state, multi-parcel workspace |
-| `wwwroot/js/main.js` | Top bar, list view, multi-parcel tabs, split-pane appraisal view |
+| `wwwroot/js/main.js` | Top bar, list view, multi-parcel tabs, split-pane appraisal view, PIN page |
 | `wwwroot/js/form.js` | 5-tab appraisal form (Subject, Sales, Income, Cost, Reconciliation) + comp repository |
 | `wwwroot/js/report.js` | Print-ready report sheets + browser-print PDF export |
+| `wwwroot/js/mapimg.js` | Interactive Leaflet parcel map (PIN page) + static report map |
+| `wwwroot/lib/leaflet/` | Vendored Leaflet (interactive map) |
 | `wwwroot/img/` | County seal assets |
 | `data/appraisal.db` | SQLite database (created at first run; not in repo) |
-| `input/` | County source files (master parcel list, transfer lists, work-queue files) |
-| `output/` | Generated deliverables + `parcel_data.json` (rivcoview API cache) |
+| `input/master_parcel_list.json` | County parcel index (APN → record + geometry); the search universe |
+| `input/` | County source files (master parcel list JSON, transfer lists, work-queue files) |
+| `output/` | Generated deliverables (empty in the current build) |
+| `storage/build_master_json.py` | Weekly pipeline: county CSVs + GIS geometry → `input/master_parcel_list.json` |
+| `storage/build/` | Pipeline artifacts (`geometry.json` cache, `build_log.txt`) |
 | `storage/` | Data-prep pipeline archive (scripts, parcel maps, PDFs) — excluded from build |
 | `share/` | Distribution copy for IT — excluded from build |
 
@@ -196,6 +201,11 @@ Single stylesheet, all theming through `:root` custom properties:
       `thead`, and centers the Final Reconciled Value in a 28px/800 soft
       emerald feature card. Verified via headless `--print-to-pdf`:
       5-page PDF, one clean sheet per page.
-- [ ] Comp similarity scoring (rank repository by similarity to subject)
+- [x] Comp similarity scoring (rank repository by similarity to subject) —
+      `scoreComp` / `rankCompsBySimilarity` in `core.js`
+- [x] Image clipboard (paste + drag-drop) — `form.js` image panel
+- [x] JSON parcel pipeline — `storage/build_master_json.py` (base/geo/assemble)
+      → `input/master_parcel_list.json`; backend `LoadParcelIndex()`
+- [x] Interactive Leaflet parcel map — `wwwroot/js/mapimg.js` (PIN page)
 - [ ] Validation layer over the appraisal/comp model (mirrors Zod schemas)
 - [ ] Dark-mode theme via `:root` variable overrides + theme picker

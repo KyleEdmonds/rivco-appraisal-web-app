@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Appraisal Workbench — County of Riverside · Commercial Valuation</title>
   <link rel="stylesheet" href="/css/app.css" />
+  <!-- Leaflet (vendored locally) — interactive parcel map on the PIN page -->
+  <link rel="stylesheet" href="/lib/leaflet/dist/leaflet.css" />
 </head>
 <body>
   <div id="boot-error"></div>
@@ -36,6 +38,7 @@
       });
     })();
   </script>
+  <script src="/lib/leaflet/dist/leaflet.js"></script>
   <script type="module" src="/js/main.js"></script>
 </body>
 </html>

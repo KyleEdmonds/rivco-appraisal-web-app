@@ -21,8 +21,10 @@ transfer-valuation, appeal, and stipulation reports as print-ready letter-size s
 | Domain models | Typed C# POCOs with explicit `[JsonPropertyName]` | `Models/*.cs` |
 | Frontend | Vanilla ES-module JS (no framework, no build step) | `wwwroot/js/{core,form,report,main}.js` |
 | Styling | Single hand-maintained stylesheet, token-driven | `wwwroot/css/app.css` |
-| Parcel source data | County CSV (`input/master_parcel_list.csv`, `RivCoViewJSON` column) | re-read on mtime change |
-| Satellite imagery | ArcGIS World Imagery, server-side cached PNGs | `storage/parcel_maps/` |
+| Parcel source data | County JSON index (`input/master_parcel_list.json`, APN → record + geometry) | re-read on mtime change |
+| Parcel data pipeline | `storage/build_master_json.py` (base/geo/assemble) — county CSVs + GIS geometry | weekly, offline |
+| Interactive map | Leaflet (vendored) + Esri World Imagery tiles, client-side | `wwwroot/js/mapimg.js` |
+| Satellite imagery (report) | ArcGIS World Imagery, server-side cached PNGs | `storage/parcel_maps/` |
 | Uploaded photos | Server-side files per APN | `storage/parcel_photos/{apn}/` |
 
 ### 1.2 Process model
@@ -455,8 +457,9 @@ compression) · `640px` (landing cards stack) · `560px` (field grids single-col
 - **Locked output DLL:** the running dev server holds `AppraisalWeb.exe`; `dotnet
   build` reports MSB3026 copy failures (not compile errors). Stop the server
   (`Stop-Process`) before a clean build, or treat MSB3026 as benign.
-- **CSV re-read:** `master_parcel_list.csv` is re-read on mtime change; a mid-write
-  read (Excel lock, partial save) must be caught and the previous in-memory copy
+- **Parcel-index re-read:** `input/master_parcel_list.json` is re-read on mtime
+  change (a fresh weekly build is picked up without restarting the app); a bad
+  read (mid-write, malformed JSON) is caught and the previous in-memory copy is
   retained.
 - **Parcel imagery:** ArcGIS fetches are cached to `storage/parcel_maps/`; a failed
   fetch returns the last cached PNG or a 404 — the UI shows the dashed

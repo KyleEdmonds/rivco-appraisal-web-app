@@ -26,3 +26,11 @@ output/*
 # Backups
 *.bak
 
+# County source data + intermediate build artifacts (regenerate via storage/build_master_json.py)
+input/spatialest/
+input/*.csv
+input/master_parcel_list_no_geo.json
+
+# Dev tooling
+codeserver_launch.bat
+

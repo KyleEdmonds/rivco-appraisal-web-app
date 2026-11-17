@@ -2484,7 +2484,6 @@ tr.tq-done td { color: #94a3b8; }
   background: #e2e8f0;
 }
 .pin-map-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: fill; }
-.pin-map-canvas svg { position: absolute; inset: 0; width: 100%; height: 100%; }
 .pin-map-loading {
   display: flex;
   align-items: center;
@@ -2508,6 +2507,29 @@ tr.tq-done td { color: #94a3b8; }
 }
 .pin-map-cap-right { display: flex; align-items: center; gap: 8px; }
 .pin-map-attr { font-weight: 400; text-transform: none; letter-spacing: 0; }
+/* Interactive Leaflet parcel map (PIN page). Leaflet adds .leaflet-container
+   to the canvas element itself; the base .pin-map-canvas rule already sizes it. */
+.pin-map-compass {
+  position: absolute; top: 10px; right: 10px; z-index: 500;
+  padding: 2px 8px; font-size: 11px; font-weight: 700; color: #fff;
+  background: rgba(15, 23, 42, 0.65); border-radius: 4px; pointer-events: none;
+}
+/* APN label on the interactive parcel map: a semi-transparent white pill with
+   dark monospaced text at the polygon's visual center. The divIcon container
+   is 0x0/transparent; the pill centers itself on the point. */
+.apn-label { background: transparent; border: none; }
+.apn-label-box {
+  display: inline-block; width: max-content;
+  transform: translate(-50%, -50%);
+  padding: 2px 7px;
+  font-family: ui-monospace, 'Cascadia Code', 'Consolas', 'Menlo', monospace;
+  font-size: 14px; font-weight: 700; white-space: nowrap;
+  color: #0f172a;
+  background: rgba(255, 255, 255, 0.5);
+  border: none;
+  border-radius: 4px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+}
 /* User-attached PIN photos. */
 .pin-photos-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .pin-photos { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }

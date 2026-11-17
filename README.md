@@ -11,7 +11,8 @@ A self-hosted web app for preparing and managing commercial real estate appraisa
 | Backend / API | **C# — .NET 10** (ASP.NET Core minimal API) |
 | Persistence | **SQLite** (`Microsoft.Data.Sqlite`) — embedded, single-file |
 | Frontend | **Vanilla JavaScript** (ES modules) + CSS — no framework, no build step |
-| Report export | jsPDF + html2canvas (client-side PDF) |
+| Parcel map | **Leaflet** (vendored) + Esri World Imagery satellite tiles |
+| Report export | Browser print (`window.print()`) — no PDF library |
 
 The C# backend is the core of the app: HTTP routing, county-data parsing/validation, the Rule 2 transfer-screening logic, and all server-side persistence. The JavaScript/CSS layer is the presentation (the assessor's UI and client-side report rendering).
 
@@ -30,9 +31,10 @@ First run creates `data/appraisal.db` (SQLite). No data ships with the repo.
 - **Multi-parcel workspace (open tabs)** — work on several parcels side by side; each tab is a saved appraisal (or the current unsaved one). Switching/closing a dirty tab saves it first, so no data is lost.
 - 5-tab appraisal form — Subject, Sales Comparison, Income, Cost, Reconciliation
 - Live report preview (print-ready 8.5×11" sheets) with zoom + fit
-- PDF report export (client-side)
+- Print-ready report export (browser print, no PDF library)
 - Appraisal list (APN, address, city, report date, final value)
-- APN/address search with suggestions (appraisals + transfer comps)
+- APN/address search with suggestions (appraisals + the full county parcel index)
+- PIN page — per-parcel characteristics, an interactive Leaflet satellite map with the parcel outline, transfer/tax history, and past in-app valuations
 - Comp repository (permanent comps from finalized appraisals + read-only transfer comps)
 - Rule 2 batch: screen a county transfer file into buckets and auto-enroll qualifying transfers as read-only transfer comps
 - Transfers work queues (per-bucket "to complete" lists; open a transfer as a pre-filled appraisal)
@@ -46,27 +48,29 @@ First run creates `data/appraisal.db` (SQLite). No data ships with the repo.
 | Path | Purpose |
 |------|---------|
 | `AppraisalWeb.csproj` | .NET 10 project |
-| `Program.cs` | Backend (API + SQLite) |
+| `Program.cs` | Backend (API + SQLite + parcel index) |
 | `Rule2.cs` | Rule 2 transfer-screening batch |
 | `start.bat` | Launcher |
-| `wwwroot/` | Frontend (HTML, CSS, JS, PDF libs, images) |
+| `wwwroot/` | Frontend (HTML, CSS, JS, Leaflet, images) |
 | `wwwroot/js/core.js` | Calculations, data model, API client, state, multi-parcel workspace |
-| `wwwroot/js/main.js` | Top bar, list view, multi-parcel tabs, split-pane appraisal view |
+| `wwwroot/js/main.js` | Top bar, list view, multi-parcel tabs, split-pane appraisal view, PIN page |
 | `wwwroot/js/form.js` | 5-tab appraisal form |
-| `wwwroot/js/report.js` | Report sheets + PDF export |
+| `wwwroot/js/report.js` | Report sheets + browser-print export |
+| `wwwroot/js/mapimg.js` | Interactive Leaflet parcel map (PIN page) + static report map |
+| `storage/build_master_json.py` | Weekly pipeline: county CSVs + GIS geometry → `input/master_parcel_list.json` |
+| `input/master_parcel_list.json` | County parcel index (APN → record + geometry); the search universe |
 
 ## Notes
 
-- Data is local only (`data/appraisal.db`), not in the repo.
-- No external network calls.
+- Appraisal data is local only (`data/appraisal.db`), not in the repo.
+- The parcel index (`input/master_parcel_list.json`) is built offline by the weekly pipeline; the running app makes no external calls (the browser loads Esri satellite tiles for the interactive map).
 - `main` = active, `STARTING_POINT_ROUGH` = reference snapshot.
 
 ## Remaining gaps vs. `appraisal_workflows` (roadmap)
 
-- Comp similarity scoring (rank the comp repository by similarity to the subject)
 - Validation layer (a JS pass over the appraisal/comp model, mirroring the Zod schemas)
 - Theme system (primary/secondary themes + dark mode via CSS variables)
-- Image clipboard (paste/drag-drop) + image compression/hashing
+- Image compression/hashing for uploaded photos (resize + SHA-256 dedup)
 
 ## Future goals
 

@@ -387,82 +387,40 @@ app.MapPut("/api/tenant", async (HttpContext ctx) =>
 });
 
 // ---------------------------------------------------------------------------
-// Parcel data — the FULL RivCo (rivcoview) assessment response per APN, carried
-// in the RivCoViewJSON column of input/master_parcel_list.csv (the search
-// universe). Served as-is so the UI can use any field (sales history,
-// assessment history, shape, street view, building details, ...). The CSV is
-// re-read when its mtime changes, so a fresh county file is picked up without
-// restarting the app. (Replaces the old output/parcel_data.json cache.)
+// Parcel data — the full county assessment record per APN from
+// input/master_parcel_list.json (the search universe): a single JSON object of
+// APN -> parcel record, built weekly by storage/build_master_json.py from the
+// county SpatialEst CSVs + GIS parcel geometry. Served as-is so the UI can use
+// any field (transfer history, assessment history, shape, building details,
+// ...). The file is re-read when its mtime changes, so a fresh build is picked
+// up without restarting the app. (Replaces the old master_parcel_list.csv /
+// RivCoViewJSON pipeline.)
 // ---------------------------------------------------------------------------
 Dictionary<string, JsonObject>? _parcelIndex = null;
 DateTime _parcelStamp = DateTime.MinValue;
 var _parcelLock = new object();
 
-// Minimal RFC 4180 CSV parser: handles quoted fields, embedded commas, and
-// doubled quotes ("" -> "). Needed because the RivCoViewJSON column is a large
-// quoted JSON blob — a naive comma-split would corrupt it.
-static List<List<string>> ParseCsv(string text)
-{
-    var records = new List<List<string>>();
-    var record = new List<string>();
-    var field = new StringBuilder();
-    bool inQuotes = false;
-    int i = 0, n = text.Length;
-    while (i < n)
-    {
-        char c = text[i];
-        if (inQuotes)
-        {
-            if (c == '"')
-            {
-                if (i + 1 < n && text[i + 1] == '"') { field.Append('"'); i += 2; }
-                else { inQuotes = false; i++; }
-            }
-            else { field.Append(c); i++; }
-        }
-        else
-        {
-            if (c == '"') { inQuotes = true; i++; }
-            else if (c == ',') { record.Add(field.ToString()); field.Clear(); i++; }
-            else if (c == '\r') { i++; if (i < n && text[i] == '\n') i++; record.Add(field.ToString()); field.Clear(); records.Add(record); record = new List<string>(); }
-            else if (c == '\n') { i++; record.Add(field.ToString()); field.Clear(); records.Add(record); record = new List<string>(); }
-            else { field.Append(c); i++; }
-        }
-    }
-    if (field.Length > 0 || record.Count > 0) { record.Add(field.ToString()); records.Add(record); }
-    return records;
-}
-
-// Load (and mtime-refresh) the parcel index from the master list CSV. Shared
+// Load (and mtime-refresh) the parcel index from the master list JSON. Shared
 // by the parcel-data and parcel-search endpoints.
 Dictionary<string, JsonObject> LoadParcelIndex()
 {
     lock (_parcelLock)
     {
-        var file = Path.Combine(app.Environment.ContentRootPath, "input", "master_parcel_list.csv");
+        var file = Path.Combine(app.Environment.ContentRootPath, "input", "master_parcel_list.json");
         var stamp = File.Exists(file) ? new FileInfo(file).LastWriteTimeUtc : DateTime.MinValue;
         if (_parcelIndex is null || stamp != _parcelStamp)
         {
             var idx = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
             if (File.Exists(file))
             {
-                var records = ParseCsv(File.ReadAllText(file, Encoding.UTF8));
-                if (records.Count > 0)
+                try
                 {
-                    var header = records[0];
-                    int pinIdx = header.IndexOf("PIN");
-                    int jsonIdx = header.IndexOf("RivCoViewJSON");
-                    for (int r = 1; r < records.Count && pinIdx >= 0 && jsonIdx >= 0; r++)
-                    {
-                        var row = records[r];
-                        if (row.Count <= jsonIdx) continue;
-                        var apn = row[pinIdx].Trim();
-                        var json = row[jsonIdx];
-                        if (apn.Length == 0 || json.Length == 0) continue;
-                        try { idx[apn] = JsonNode.Parse(json) as JsonObject ?? new JsonObject(); }
-                        catch { /* skip a malformed RivCoViewJSON row */ }
-                    }
+                    var root = JsonNode.Parse(File.ReadAllText(file, Encoding.UTF8)) as JsonObject;
+                    if (root is not null)
+                        foreach (var (apn, node) in root)
+                            if (node is JsonObject obj) idx[apn] = obj;
                 }
+                catch { /* keep the previous in-memory copy on a bad read */ }
             }
             _parcelIndex = idx;
             _parcelStamp = stamp;

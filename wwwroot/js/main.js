@@ -6,7 +6,7 @@
 import { api, state, saveCurrent, loadAppraisal, newAppraisal, fmtCurrency, fmtNumber, fmtAcresNum, titleCase, normalizeCity, fmtDate, computeAppraisal, scheduleAutosave, exportWip, workspace, activeTab, addTab, closeTab, snapshotActiveTab, restoreWorkspaceLocal, clearLocalWorkspace, migrateSubjectImage, normalizeParcel, applyPortfolio, normalizePortfolio, portfolioPayload, isPortfolio, activeParcelIndex, reportMode, selectParcel, setViewMode, addParcel, removeParcel, resetActiveParcel, computePortfolioAggregate, createEmptyParcel } from './core.js';
 import { renderForm, setTab, loadRepo, commitCoverApn } from './form.js';
 import { renderReport, fitSheets, zoomBy, zoomFit } from './report.js';
-import { compositeParcelMap, reverseGeocode } from './mapimg.js';
+import { interactiveParcelMap, reverseGeocode } from './mapimg.js';
 
 function el(tag, attrs = {}, ...children) {
   const node = document.createElement(tag);
@@ -283,6 +283,9 @@ let restoringView = false;
 // Back can return to it) and mark the new view as current. Skips the push while
 // restoring (so goBack doesn't re-push the view it is returning to).
 function enterView(name, args = []) {
+  // Leaving the PIN page: tear down its Leaflet map (it keeps window listeners
+  // alive until map.remove() is called, even after its DOM is replaced).
+  if (currentView?.name === 'pin') destroyPinMap();
   if (!restoringView) navHistory.push(currentView);
   currentView = { name, args };
 }
@@ -1554,59 +1557,35 @@ function parseWktPolygon(wkt) {
   return out;
 }
 
-// Draw the parcel's polygon over a satellite snapshot. The image is composited
-// in the browser (mapimg.js): it fetches ArcGIS World Imagery + street labels
-// directly, draws the parcel outline and APN label, and returns a data URL.
-// Returns a wrapper element immediately (with a loading state) and fills it in
-// when the composited image is ready.
+// Interactive parcel map (Leaflet, mapimg.js): live satellite imagery with
+// zoom/pan, the parcel polygon overlaid, and an APN label. Returns a wrapper
+// element; the Leaflet instance is torn down when the PIN page leaves the DOM
+// (Leaflet keeps window listeners alive until map.remove() is called).
+let _pinMapCleanup = null;
+export function destroyPinMap() {
+  if (_pinMapCleanup) { _pinMapCleanup(); _pinMapCleanup = null; }
+}
 function drawParcelMap(parcel) {
-  const rings = parseWktPolygon(parcel.shape);
   const apn = String(parcel.Account || parcel.apn || '');
-  const wrap = el('div', { class: 'pin-map' });
+  const rings = parseWktPolygon(parcel.shape);
   if (rings.length === 0) {
-    wrap.innerHTML = `<div class="pin-map-canvas pin-map-loading">No parcel geometry available.</div>`;
-    return wrap;
+    return el('div', { class: 'pin-map' },
+      el('div', { class: 'pin-map-canvas pin-map-loading' }, 'No parcel geometry available.'));
   }
-  wrap.innerHTML = `<div class="pin-map-canvas pin-map-loading">Loading map…</div>`;
-  const W = 1600, H = 900; // 16:9, matches the composited image
-  // The parcel outline + APN label are composited into the image itself; the
-  // SVG overlay only carries the compass.
-  const svg =
-    `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Parcel map">` +
-    `<g font-family="sans-serif" font-size="28" font-weight="700" fill="#fff" stroke="#000" stroke-width="1">` +
-    `<text x="${W - 34}" y="44" text-anchor="middle">N</text>` +
-    `<polygon points="${W - 34},52 ${W - 44},70 ${W - 24},70" fill="#fff" stroke="none"/>` +
-    `</g></svg>`;
-  const render = (dataUrl) => {
-    if (!dataUrl) {
-      wrap.innerHTML = `<div class="pin-map-canvas pin-map-loading">Map unavailable.</div>`;
-      return;
-    }
-    wrap.innerHTML =
-      `<div class="pin-map-canvas">` +
-      `<img class="pin-map-img" src="${dataUrl}" alt="Parcel satellite map">` + svg + `</div>` +
-      `<div class="pin-map-cap">` +
-      `<span>Parcel Map · satellite</span>` +
-      `<span class="pin-map-cap-right">` +
-      `<button class="btn tiny pin-map-refreshbtn" title="Re-download the satellite image from the GIS server">↻ Refresh</button>` +
-      `<button class="btn tiny pin-map-imgbtn" title="Open Google image search for this parcel">🔍 Images</button>` +
-      `<span class="pin-map-attr">Imagery © Esri/World Imagery</span>` +
-      `</span></div>`;
-    wrap.querySelector('.pin-map-imgbtn').addEventListener('click', () => googleImageSearch(parcel));
-    wrap.querySelector('.pin-map-refreshbtn').addEventListener('click', async (e) => {
-      const btn = e.currentTarget;
-      btn.disabled = true;
-      btn.textContent = 'Refreshing…';
-      try {
-        const url = await compositeParcelMap(apn, { noCache: true });
-        if (!url) throw new Error();
-        wrap.querySelector('.pin-map-img').src = url;
-        toast('Parcel map refreshed');
-      } catch { toast('Refresh failed', true); }
-      finally { btn.disabled = false; btn.textContent = '↻ Refresh'; }
-    });
-  };
-  compositeParcelMap(apn).then(render).catch(() => render(null));
+  const { el: wrap, destroy } = interactiveParcelMap(parcel.shape, apn);
+  _pinMapCleanup = destroy;
+  const cap = el('div', { class: 'pin-map-cap' },
+    el('span', {}, 'Parcel Map · satellite'),
+    el('span', { class: 'pin-map-cap-right' },
+      el('button', {
+        class: 'btn tiny pin-map-refreshbtn',
+        title: 'Re-center the map on this parcel',
+        onclick: () => { destroyPinMap(); const fresh = drawParcelMap(parcel); wrap.replaceWith(fresh); },
+      }, '↻ Refresh'),
+      el('button', { class: 'btn tiny pin-map-imgbtn', title: 'Open Google image search for this parcel', onclick: () => googleImageSearch(parcel) }, '🔍 Images'),
+      el('span', { class: 'pin-map-attr' }, 'Imagery © Esri/World Imagery'),
+    ));
+  wrap.appendChild(cap);
   return wrap;
 }
 
@@ -1849,19 +1828,21 @@ function renderPinBody(apn, parcel, mine, wqItems = []) {
   const sales = [...(parcel.sales || [])].sort((a, b) => saleKey(b.saledate).localeCompare(saleKey(a.saledate)));
   const taxHistory = [...(parcel.history || [])].sort((a, b) => Number(b.TaxYear || 0) - Number(a.TaxYear || 0));
 
-  // Left (main) column: work queue, characteristics, buildings, sales + tax
-  // history, past valuations. Right column: the parcel map on its own.
+  // Left (main) column: characteristics, buildings, sales + tax history, past
+  // in-app valuations, then the work queue at the bottom. Right column: the
+  // parcel map on its own.
   const left = el('div', { class: 'pin-col pin-col-main' },
-    wqSection,
     el('div', { class: 'pin-section' },
       el('div', { class: 'pin-section-title' }, 'Characteristics'),
       el('div', { class: 'pin-defs' },
+        pinDef('Class', titleCase(parcel.class_code)),
         pinDef('Address', titleCase(parcel.address)),
         pinDef('City', normalizeCity(city)),
-        pinDef('Class', titleCase(parcel.class_code)),
+        pinDef('Zip', parcel.PostalCd || ''),
+        pinDef('District', titleCase(parcel.District)),
+        pinDef('Zoning', parcel.Zoning || ''),
         pinDef('Acreage', fmtAcresNum(parcel.acreage)),
         pinDef('Site SqFt', fmtNumber(Number(String(parcel.SquareFeet).replace(/[^0-9.]/g, '')) || 0)),
-        pinDef('District', titleCase(parcel.District)),
         pinDef('Legal Description', titleCase(parcel.LegalDescription)),
         pinDef('Coordinates', parcel.lat && parcel.lng ? `${parcel.lat}, ${parcel.lng}` : ''),
       ),
@@ -1869,7 +1850,7 @@ function renderPinBody(apn, parcel, mine, wqItems = []) {
     buildings.length > 0 ? el('div', { class: 'pin-section' },
       el('div', { class: 'pin-section-title' }, `Buildings (${buildings.length})`),
       el('table', { class: 'list-table' },
-        pinHead([['Building'], ['Type'], ['Year Built', true], ['Quality', true], ['Condition'], ['Area SF', true], ['Status']]),
+        pinHead([['Building'], ['Type'], ['Year Built', true], ['Quality', true], ['Condition'], ['Area SF', true]]),
         el('tbody', {}, buildings.map((b) => el('tr', {},
           el('td', {}, b.name),
           el('td', {}, b.type || '—'),
@@ -1877,17 +1858,16 @@ function renderPinBody(apn, parcel, mine, wqItems = []) {
           el('td', { class: 'num' }, b.quality || '—'),
           el('td', {}, b.condition || '—'),
           el('td', { class: 'num' }, b.area || '—'),
-          el('td', {}, b.active || '—'),
         ))),
       ))
       : null,
     (parcel.sales || []).length > 0 ? el('div', { class: 'pin-section' },
-      el('div', { class: 'pin-section-title' }, 'County Sales History'),
+      el('div', { class: 'pin-section-title' }, 'Transfer History'),
       el('table', { class: 'list-table' },
-        pinHead([['Sale Date'], ['Price', true], ['Ratio'], ['Doc #']]),
+        pinHead([['Transfer Date'], ['Price', true], ['Ratio'], ['Doc #']]),
         el('tbody', {}, sales.map((s) => el('tr', {},
           el('td', {}, s.saledate || '—'),
-          el('td', { class: 'num' }, s.SalePrice ? fmtCurrency(s.SalePrice) : '—'),
+          el('td', { class: 'num' }, s.SalePrice ? fmtCurrency(Number(String(s.SalePrice).replace(/[^0-9.]/g, '')) || 0) : '—'),
           el('td', {}, s.LocalRatioCd || '—'),
           el('td', {}, s.DocNumber || '—'),
         ))),
@@ -1896,19 +1876,18 @@ function renderPinBody(apn, parcel, mine, wqItems = []) {
     (parcel.history || []).length > 0 ? el('div', { class: 'pin-section' },
       el('div', { class: 'pin-section-title' }, 'Tax History'),
       el('table', { class: 'list-table' },
-        pinHead([['Year'], ['Type'], ['Total Assessed', true], ['Land', true], ['Structure', true], ['Liv. Imp.', true]]),
+        pinHead([['Year'], ['Type'], ['Total Assessed', true], ['Land', true], ['Structure', true]]),
         el('tbody', {}, taxHistory.map((h) => el('tr', {},
           el('td', {}, h.TaxYear || '—'),
           el('td', {}, h.EventType || '—'),
           el('td', { class: 'num' }, fmtCurrency(Number(String(h.AssessedTot || '').replace(/[^0-9.]/g, '')) || 0)),
-          el('td', { class: 'num' }, fmtNumber(Number(String(h.AssessedLand || '').replace(/[^0-9.]/g, '')) || 0)),
-          el('td', { class: 'num' }, fmtNumber(Number(String(h.AssessedStructure || '').replace(/[^0-9.]/g, '')) || 0)),
-          el('td', { class: 'num' }, fmtNumber(Number(String(h.AssessedLivImp || '').replace(/[^0-9.]/g, '')) || 0)),
+          el('td', { class: 'num' }, fmtCurrency(Number(String(h.AssessedLand || '').replace(/[^0-9.]/g, '')) || 0)),
+          el('td', { class: 'num' }, fmtCurrency(Number(String(h.AssessedStructure || '').replace(/[^0-9.]/g, '')) || 0)),
         ))),
       ))
       : null,
     el('div', { class: 'pin-section' },
-      el('div', { class: 'pin-section-title' }, `Past Valuations (${mine.length})`),
+      el('div', { class: 'pin-section-title' }, `Past In-App Valuations (${mine.length})`),
       mine.length === 0
         ? el('div', { class: 'r2-none' }, 'No appraisals for this PIN yet — start one above.')
         : el('div', { class: 'pin-scroll' },
@@ -1922,7 +1901,8 @@ function renderPinBody(apn, parcel, mine, wqItems = []) {
               ))),
             ),
           ),
-    )
+    ),
+    wqSection,
   );
 
   // Right column: the parcel map on its own (with the image-search button in

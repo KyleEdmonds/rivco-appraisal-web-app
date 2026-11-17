@@ -67,13 +67,109 @@ export function mapExtent(rings, { padding = 0.4, baseWidth = 1200 } = {}) {
   return { xmin, ymin, xmax, ymax, W, H };
 }
 
-// Average of all ring points — a good-enough anchor for a parcel's APN label.
+// Average of all ring points — a fallback anchor for a parcel's APN label.
 export function centroid(rings) {
   let sx = 0, sy = 0, n = 0;
   for (const ring of rings)
     for (const [lng, lat] of ring) { sx += lng; sy += lat; n++; }
   if (n === 0) return null;
   return [sx / n, sy / n];
+}
+
+// Pole of inaccessibility: the point inside the polygon that is farthest from
+// the boundary — the true visual center. Better than a vertex average for
+// irregular shapes (e.g. a triangle), where the average can sit near an edge
+// and let a wide label overflow the boundary. Uses the largest ring as the
+// outer boundary and the remaining rings as holes.
+export function poleOfInaccessibility(rings) {
+  if (!rings || rings.length === 0) return null;
+  const area = (ring) => {
+    let a = 0;
+    for (let i = 0; i < ring.length; i++) {
+      const [x1, y1] = ring[i];
+      const [x2, y2] = ring[(i + 1) % ring.length];
+      a += x1 * y2 - x2 * y1;
+    }
+    return Math.abs(a) / 2;
+  };
+  const outer = rings.reduce((best, r) => (area(r) > area(best) ? r : best), rings[0]);
+  const holes = rings.filter((r) => r !== outer);
+  if (outer.length < 3) return null;
+
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const [x, y] of outer) {
+    if (x < minX) minX = x; if (x > maxX) maxX = x;
+    if (y < minY) minY = y; if (y > maxY) maxY = y;
+  }
+  const w = maxX - minX, h = maxY - minY;
+  if (w <= 0 || h <= 0) return outer[0];
+
+  // Point-in-ring via ray casting.
+  const inRing = (x, y, ring) => {
+    let inside = false;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const [xi, yi] = ring[i], [xj, yj] = ring[j];
+      if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+    }
+    return inside;
+  };
+  const inside = (x, y) => inRing(x, y, outer) && holes.every((hr) => !inRing(x, y, hr));
+
+  // Minimum distance from a point to every edge of the given rings.
+  const distToSeg = (px, py, ax, ay, bx, by) => {
+    const dx = bx - ax, dy = by - ay;
+    const l2 = dx * dx + dy * dy;
+    let t = l2 === 0 ? 0 : ((px - ax) * dx + (py - ay) * dy) / l2;
+    t = Math.max(0, Math.min(1, t));
+    return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+  };
+  const minEdgeDist = (x, y) => {
+    let d = Infinity;
+    for (const ring of [outer, ...holes]) {
+      for (let i = 0; i < ring.length; i++) {
+        const [ax, ay] = ring[i];
+        const [bx, by] = ring[(i + 1) % ring.length];
+        const dd = distToSeg(x, y, ax, ay, bx, by);
+        if (dd < d) d = dd;
+      }
+    }
+    return d;
+  };
+
+  // Coarse grid search, then progressive refinement (halving the step).
+  const N = 16;
+  let best = null, bestD = -1;
+  for (let i = 0; i <= N; i++) {
+    for (let j = 0; j <= N; j++) {
+      const x = minX + (w * i) / N, y = minY + (h * j) / N;
+      if (!inside(x, y)) continue;
+      const d = minEdgeDist(x, y);
+      if (d > bestD) { bestD = d; best = [x, y]; }
+    }
+  }
+  if (!best) return null;
+  let step = Math.max(w, h) / N;
+  for (let iter = 0; iter < 5; iter++) {
+    for (let i = -1; i <= 1; i++) {
+      for (let j = -1; j <= 1; j++) {
+        const x = best[0] + i * step, y = best[1] + j * step;
+        if (x < minX || x > maxX || y < minY || y > maxY) continue;
+        if (!inside(x, y)) continue;
+        const d = minEdgeDist(x, y);
+        if (d > bestD) { bestD = d; best = [x, y]; }
+      }
+    }
+    step /= 2;
+  }
+  return best;
+}
+
+// Format a 9-digit APN with standard dashes (400010006 -> 400-010-006) for
+// easier scanning. Non-9-digit values are returned unchanged.
+export function formatApn(apn) {
+  const s = String(apn ?? '').trim();
+  if (/^\d{9}$/.test(s)) return `${s.slice(0, 3)}-${s.slice(3, 6)}-${s.slice(6)}`;
+  return s;
 }
 
 // --- image loading ----------------------------------------------------------
@@ -234,6 +330,87 @@ export async function compositeParcelMap(apns, opts = {}) {
   const url = await compositeRings(ringsByApn, opts);
   if (url && !opts.noCache) cacheSet(key, url);
   return url;
+}
+
+// --- interactive parcel map (Leaflet) ---------------------------------------
+// Live zoom/pan map for the PIN page: ArcGIS World Imagery + World
+// Transportation (street labels) tiles fetched by the browser, the parcel
+// polygon overlaid, and a permanent APN label at the centroid. Leaflet is
+// vendored locally (wwwroot/lib/leaflet). Returns a wrapper element; call
+// the returned `destroy()` when the element leaves the DOM (Leaflet tracks
+// window listeners that must be released).
+export function interactiveParcelMap(wkt, apn) {
+  const wrap = document.createElement('div');
+  wrap.className = 'pin-map';
+  const canvas = document.createElement('div');
+  canvas.className = 'pin-map-canvas';
+  wrap.appendChild(canvas);
+  const rings = parseWktRings(wkt);
+  if (rings.length === 0 || typeof L === 'undefined') {
+    canvas.classList.add('pin-map-loading');
+    canvas.textContent = 'No parcel geometry available.';
+    return { el: wrap, destroy: () => {} };
+  }
+  const compass = document.createElement('div');
+  compass.className = 'pin-map-compass';
+  compass.textContent = 'N ▲';
+  canvas.appendChild(compass);
+
+  // Leaflet needs a sized container: fitBounds() derives the zoom from the
+  // container size, and this element is not in the DOM (size 0) until the PIN
+  // page is rendered. Defer map creation until the canvas first reports a
+  // non-zero size (ResizeObserver fires on attach; rAF covers the case where
+  // it is already attached, e.g. the Refresh button).
+  let map = null;
+  let ro = null;
+  const init = () => {
+    if (map) return;
+    const rect = canvas.getBoundingClientRect();
+    if (rect.width < 10 || rect.height < 10) return;
+    if (ro) { ro.disconnect(); ro = null; }
+    map = L.map(canvas, { zoomControl: true });
+    L.tileLayer(
+      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+      { maxZoom: 19, attribution: 'Imagery © Esri/World Imagery' }).addTo(map);
+    L.tileLayer(
+      'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}',
+      { maxZoom: 19 }).addTo(map);
+    const layers = [];
+    for (const ring of rings) {
+      // WKT rings are [lng, lat]; Leaflet wants [lat, lng].
+      const pts = ring.map(([lng, lat]) => [lat, lng]);
+      const poly = L.polygon(pts, {
+        color: '#2563eb', weight: 3, opacity: 0.95,
+        fillColor: '#2563eb', fillOpacity: 0.28,
+      }).addTo(map);
+      layers.push(poly);
+    }
+    // APN label: a plain divIcon (no marker dot) anchored at the pole of
+    // inaccessibility (the polygon's visual center) so it sits cleanly inside
+    // the shape rather than near an edge. iconSize [0,0] keeps Leaflet from
+    // imposing a size; the label centers itself on the point via CSS transform.
+    const c = poleOfInaccessibility(rings) || centroid(rings);
+    if (c) {
+      const icon = L.divIcon({
+        className: 'apn-label',
+        html: `<div class="apn-label-box">${formatApn(apn)}</div>`,
+        iconSize: [0, 0],
+      });
+      L.marker([c[1], c[0]], { icon, interactive: false, keyboard: false }).addTo(map);
+    }
+    map.fitBounds(L.featureGroup(layers).getBounds().pad(0.35), { maxZoom: 19 });
+  };
+  ro = new ResizeObserver(() => { if (!map) init(); });
+  ro.observe(canvas);
+  requestAnimationFrame(init);
+
+  return {
+    el: wrap,
+    destroy: () => {
+      if (ro) { ro.disconnect(); ro = null; }
+      if (map) { try { map.remove(); } catch { /* already removed */ } map = null; }
+    },
+  };
 }
 
 // --- reverse geocode --------------------------------------------------------

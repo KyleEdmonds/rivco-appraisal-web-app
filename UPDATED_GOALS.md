@@ -1,5 +1,9 @@
 # Updated Goals — Storage, Export, and Form UX Overhaul
 
+> **Status: all items implemented.** This was a planning document for the storage,
+> PDF-export, and form-UX overhaul; every task in the implementation table below is
+> complete. Kept as a historical record of the decisions and rationale.
+
 ## Part 1: Storage Minimization
 
 **Problem:** `syncSubjectParcelMap()` stores a ~2.5MB base64 data URL in `state.data.property.subjectPhotoUrl`. Every appraisal that references the same APN carries its own copy.
