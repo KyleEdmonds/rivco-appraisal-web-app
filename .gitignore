@@ -34,3 +34,6 @@ input/master_parcel_list_no_geo.json
 # Dev tooling
 codeserver_launch.bat
 
+# Node tooling (ESLint + tests)
+node_modules/
+

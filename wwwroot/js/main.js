@@ -3,30 +3,10 @@
 // Left pane: control bar (dates + APN search) + tabbed form
 // Right pane: report staging. Draggable split handle between them.
 // ---------------------------------------------------------------------------
-import { api, state, saveCurrent, loadAppraisal, newAppraisal, fmtCurrency, fmtNumber, fmtAcresNum, titleCase, normalizeCity, fmtDate, computeAppraisal, scheduleAutosave, exportWip, workspace, activeTab, addTab, closeTab, snapshotActiveTab, restoreWorkspaceLocal, clearLocalWorkspace, migrateSubjectImage, normalizeParcel, applyPortfolio, normalizePortfolio, portfolioPayload, isPortfolio, activeParcelIndex, reportMode, selectParcel, setViewMode, addParcel, removeParcel, resetActiveParcel, computePortfolioAggregate, createEmptyParcel } from './core.js';
+import { el, toast, refreshTopBar, api, state, saveCurrent, loadAppraisal, newAppraisal, fmtCurrency, fmtNumber, fmtAcresNum, titleCase, normalizeCity, fmtDate, scheduleAutosave, exportWip, workspace, activeTab, addTab, closeTab, snapshotActiveTab, restoreWorkspaceLocal, clearLocalWorkspace, applyPortfolio, normalizePortfolio, portfolioPayload, isPortfolio, activeParcelIndex, selectParcel, setViewMode, addParcel, removeParcel, createEmptyParcel } from './core.js';
 import { renderForm, setTab, loadRepo, commitCoverApn } from './form.js';
 import { renderReport, fitSheets, zoomBy, zoomFit } from './report.js';
-import { interactiveParcelMap, reverseGeocode } from './mapimg.js';
-
-function el(tag, attrs = {}, ...children) {
-  const node = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) {
-    if (k === 'class') node.className = v;
-    else if (k.startsWith('on') && typeof v === 'function') node.addEventListener(k.slice(2), v);
-    else if (v !== null && v !== undefined) node.setAttribute(k, v);
-  }
-  for (const c of children.flat()) {
-    if (c === null || c === undefined || c === false) continue;
-    node.append(c.nodeType ? c : document.createTextNode(String(c)));
-  }
-  return node;
-}
-
-function toast(msg, isError = false) {
-  const t = el('div', { class: `toast ${isError ? 'error' : ''}` }, msg);
-  document.body.append(t);
-  setTimeout(() => t.remove(), 3000);
-}
+import { interactiveParcelMap, reverseGeocode, parseWktRings } from './mapimg.js';
 
 // The cover setup bar's APN/Address search box is injected here (not in
 // form.js) because it needs the navigation callbacks that live in this module.
@@ -99,27 +79,6 @@ function setTopBarLanding(on) {
   if (!bar) return;
   bar.classList.toggle('tb-landing', on);
   bar.classList.remove('tb-appraisal');
-}
-
-// Keep the top-bar headline + total assessed in sync with the form.
-export function refreshTopBar() {
-  const addr = document.getElementById('tb-addr');
-  const sub = document.getElementById('tb-sub');
-  const val = document.getElementById('tb-value');
-  const label = document.querySelector('.tb-value .label');
-  if (reportMode() === 'portfolio') {
-    const agg = computePortfolioAggregate(state.portfolio.parcels);
-    if (addr) addr.textContent = `Portfolio (${agg.parcelCount} parcels)`;
-    if (sub) sub.textContent = 'MULTI-PARCEL';
-    if (val) val.textContent = fmtCurrency(agg.totalFinalValue);
-    if (label) label.textContent = 'Total Portfolio Value';
-    return;
-  }
-  const d = state.data;
-  if (addr) addr.textContent = d.property.address || d.property.apn || '—';
-  if (sub) sub.textContent = [normalizeCity(d.property.city), d.property.apn].filter(Boolean).join(' · ');
-  if (val) val.textContent = fmtCurrency(computeAppraisal(d).totalAssessed);
-  if (label) label.textContent = 'Total Assessed';
 }
 
 // --- multi-parcel workspace (open tabs) --------------------------------------
@@ -1034,6 +993,18 @@ function applyTransferCompFields(d, r) {
   if (r.siteSqFt) d.land.siteAreaSqFt = r.siteSqFt;
 }
 
+// Shared tail for the "open a new pre-filled appraisal" flows (openTransfer,
+// openTransferComp, openAppraisalFromParcel): mark dirty, register the tab,
+// show the appraisal view, and schedule a local autosave.
+function commitNewAppraisal(message) {
+  state.dirty = true;
+  addTab({ id: state.id, apn: state.data.property.apn, address: state.data.property.address, dirty: true });
+  showAppraisal();
+  renderTabs();
+  scheduleAutosave();
+  if (message) toast(message);
+}
+
 // Open a new appraisal pre-filled from a work-queue transfer row: APN,
 // document number, effective date = record date, sale price, ratio code,
 // building type. Bucket rows carry no address/characteristics columns, so
@@ -1069,11 +1040,7 @@ async function openTransfer(r) {
       if (comp) applyTransferCompFields(d, comp);
     } catch { /* best-effort enrichment */ }
   }
-  state.dirty = true;
-  addTab({ id: state.id, apn: p.apn, address: d.property.address, dirty: true });
-  showAppraisal();
-  renderTabs();
-  scheduleAutosave();
+  commitNewAppraisal();
 }
 
 async function openById(id) {
@@ -1119,12 +1086,7 @@ async function openTransferComp(r) {
   d.property.apn = r.apn || '';
   if (r.saleDate) d.property.effectiveDate = r.saleDate;
   applyTransferCompFields(d, r);
-  state.dirty = true;
-  addTab({ id: state.id, apn: d.property.apn, address: d.property.address, dirty: true });
-  showAppraisal();
-  renderTabs();
-  scheduleAutosave();
-  toast(`Opened ${r.apn || 'transfer'} from transfers — hit Save to keep it`);
+  commitNewAppraisal(`Opened ${r.apn || 'transfer'} from transfers — hit Save to keep it`);
 }
 
 function apnSearchBox() {
@@ -1497,9 +1459,6 @@ async function renderArchive() {
 function openArchiveDetail(r) {
   enterView('archiveDetail', [r]);
   const main = document.getElementById('main');
-  const field = (label, value) => el('div', { class: 'arch-field' },
-    el('div', { class: 'arch-label' }, label),
-    el('div', { class: 'arch-value' }, (value === undefined || value === null || value === '') ? '—' : String(value)));
   main.replaceChildren(
     el('div', { class: 'list-view archive-detail' },
       el('div', { class: 'list-head' },
@@ -1507,16 +1466,16 @@ function openArchiveDetail(r) {
         el('h2', {}, r.apn || 'Archived Comp'),
       ),
       el('div', { class: 'arch-grid' },
-        field('Address', r.address),
-        field('City', normalizeCity(r.city)),
-        field('Property Type', r.propertyType),
-        field('Quality', r.quality),
-        field('Condition', r.condition),
-        field('Sale Date', r.saleDate),
-        field('Price', r.price > 0 ? fmtCurrency(r.price) : '—'),
-        field('Building SF', r.buildingArea > 0 ? Number(r.buildingArea).toLocaleString() : '—'),
-        field('Land (acres)', r.landArea > 0 ? Number(r.landArea).toLocaleString() : '—'),
-        field('Zoning', r.zoning),
+        pinDetail('Address', r.address),
+        pinDetail('City', normalizeCity(r.city)),
+        pinDetail('Property Type', r.propertyType),
+        pinDetail('Quality', r.quality),
+        pinDetail('Condition', r.condition),
+        pinDetail('Sale Date', r.saleDate),
+        pinDetail('Price', r.price > 0 ? fmtCurrency(r.price) : '—'),
+        pinDetail('Building SF', r.buildingArea > 0 ? Number(r.buildingArea).toLocaleString() : '—'),
+        pinDetail('Land (acres)', r.landArea > 0 ? Number(r.landArea).toLocaleString() : '—'),
+        pinDetail('Zoning', r.zoning),
       ),
     ),
   );
@@ -1538,25 +1497,6 @@ const pinDef = (label, value) => el('div', { class: 'pin-def' },
   el('div', { class: 'pin-def-v' }, (value === undefined || value === null || value === '') ? '—' : String(value)));
 
 // --- parcel map ---------------------------------------------------------------
-// Parse a WKT POLYGON / MULTIPOLYGON string into an array of rings; each ring
-// is an array of [lng, lat] points. The innermost parenthesized groups are the
-// rings (outer rings + holes), so a single regex pass over them is enough.
-function parseWktPolygon(wkt) {
-  const out = [];
-  if (!wkt) return out;
-  const s = String(wkt).trim();
-  const groupRe = /\(([^()]+)\)/g;
-  let m;
-  while ((m = groupRe.exec(s)) !== null) {
-    const coords = m[1].split(',').map((pair) => {
-      const p = pair.trim().split(/\s+/);
-      return [parseFloat(p[0]), parseFloat(p[1])];
-    }).filter((pt) => Number.isFinite(pt[0]) && Number.isFinite(pt[1]));
-    if (coords.length >= 3) out.push(coords);
-  }
-  return out;
-}
-
 // Interactive parcel map (Leaflet, mapimg.js): live satellite imagery with
 // zoom/pan, the parcel polygon overlaid, and an APN label. Returns a wrapper
 // element; the Leaflet instance is torn down when the PIN page leaves the DOM
@@ -1567,7 +1507,7 @@ export function destroyPinMap() {
 }
 function drawParcelMap(parcel) {
   const apn = String(parcel.Account || parcel.apn || '');
-  const rings = parseWktPolygon(parcel.shape);
+  const rings = parseWktRings(parcel.shape);
   if (rings.length === 0) {
     return el('div', { class: 'pin-map' },
       el('div', { class: 'pin-map-canvas pin-map-loading' }, 'No parcel geometry available.'));
@@ -1961,12 +1901,7 @@ async function openAppraisalFromParcel(apn, caseType = 'transfer') {
     const parcel = await api.getParcelData(apn);
     applyParcelFields(d, parcel);
   } catch { /* no county record — start blank */ }
-  state.dirty = true;
-  addTab({ id: state.id, apn, address: d.property.address, dirty: true });
-  showAppraisal();
-  renderTabs();
-  scheduleAutosave();
-  toast(`Opened ${apn} — property data pre-filled from the county record`);
+  commitNewAppraisal(`Opened ${apn} — property data pre-filled from the county record`);
 }
 
 function showAppraisal() {

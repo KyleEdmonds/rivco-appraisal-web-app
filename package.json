@@ -1,0 +1,14 @@
+{
+  "name": "appraisal-workbench",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Client-side tooling (ESLint + tests) for the Appraisal Workbench web app",
+  "scripts": {
+    "lint": "eslint .",
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "eslint": "^10.0.0"
+  }
+}

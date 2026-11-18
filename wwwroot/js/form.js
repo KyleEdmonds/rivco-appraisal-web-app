@@ -3,11 +3,11 @@
 // 1:1 port of the original PropertyForm (Subject / Sales / Income / Reconcile / Cost)
 // ---------------------------------------------------------------------------
 import {
-  state, markDirty, computeAppraisal, hasCostData, hasIncomeData,
-  fmtCurrency, fmtCurrencyRounded, fmtNumber, fmtPct, fmtAcresNum, fmtDate, fmtDateMDY, normalizeCity, titleCase, api,
+  el, toast, state, markDirty, computeAppraisal, hasCostData, hasIncomeData,
+  fmtCurrency, fmtCurrencyRounded, fmtNumber, fmtPct, fmtAcresNum, fmtDateMDY, normalizeCity, titleCase, api,
   getLocalComps, clearLocalComps, importLocalComps, scheduleAutosave,
-  resolveSubjectImageUrl, resolveCoverPhotoUrl, resolvePhotoUrl, resolveCompPhotoUrl, photoImg, rankCompsBySimilarity,
-  isPortfolio, activeParcelIndex, reportMode, selectParcel, setViewMode, addParcel, removeParcel, resetActiveParcel, computePortfolioAggregate,
+  resolveCoverPhotoUrl, resolvePhotoUrl, resolveCompPhotoUrl, photoImg, rankCompsBySimilarity,
+  isPortfolio, selectParcel, addParcel, removeParcel, computePortfolioAggregate,
 } from './core.js';
 import { renderReport, scrollToSection } from './report.js';
 
@@ -43,28 +43,6 @@ const ADJ_FIELDS = [
   ['adjMarketConditions', 'Market Conditions'],
   ['adjConditionOfSale', 'Condition of Sale'],
 ];
-
-// --- dom helper --------------------------------------------------------------
-
-function el(tag, attrs = {}, ...children) {
-  const node = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) {
-    if (k === 'class') node.className = v;
-    else if (k.startsWith('on') && typeof v === 'function') node.addEventListener(k.slice(2), v);
-    else if (v !== null && v !== undefined) node.setAttribute(k, v);
-  }
-  for (const c of children.flat()) {
-    if (c === null || c === undefined || c === false) continue;
-    node.append(c.nodeType ? c : document.createTextNode(String(c)));
-  }
-  return node;
-}
-
-function toast(msg, isError = false) {
-  const t = el('div', { class: `toast ${isError ? 'error' : ''}` }, msg);
-  document.body.append(t);
-  setTimeout(() => t.remove(), 3000);
-}
 
 // --- state path binding ------------------------------------------------------
 
@@ -345,39 +323,11 @@ function denseSelect(path, options) {
 
 // --- Subject tab (PropertyTab) ------------------------------------------------
 
-function imgBox(title, path) {
-  const [parent, key] = resolvePath(path);
-  const body = el('div', { class: 'img-body' });
-  const render = () => {
-    body.replaceChildren();
-    if (parent[key]) {
-      body.append(el('img', { class: 'img-preview', src: parent[key] }));
-      const del = el('button', { class: 'btn tiny danger' }, 'Remove');
-      del.onclick = () => { parent[key] = undefined; markDirty(); refreshComputed(); render(); };
-      body.append(el('div', { class: 'img-actions' }, del));
-    } else {
-      body.append(el('div', { class: 'img-empty' }, 'No image'));
-    }
-    const file = el('input', { type: 'file', accept: 'image/*' });
-    file.onchange = () => {
-      const f = file.files[0];
-      if (!f) return;
-      const r = new FileReader();
-      r.onload = () => { parent[key] = r.result; markDirty(); refreshComputed(); render(); };
-      r.readAsDataURL(f);
-    };
-    body.append(file);
-  };
-  render();
-  return el('div', { class: 'img-box' }, el('header', {}, el('span', {}, title)), body);
-}
-
 // --- subject photo upload (browse / drag-drop / paste) ------------------------
 // --- subject image panel (GIS map / upload) -----------------------------------
 // Two-mode image selector: "GIS Map" fetches the cached satellite snapshot,
 // "Upload / Paste" accepts browse, drag-drop, or Ctrl+V. Stores a reference
 // (not base64) in state.data.property.subjectImage.
-let activeImageDrop = null;
 let imagePasteBound = false;
 
 // Google Static Maps API key (for the Subject Photos "Map" button).
@@ -796,37 +746,15 @@ function portfolioSubjectTab() {
 
 function subjectTab() {
   const d = state.data;
-  const imp = d.improvements.primary;
   const { outbuildings } = d.improvements;
 
   // Property Summary — combined site + building characteristics (dense grid)
-  const addOutbuilding = () => {
-    const id = `imp-${Date.now()}`;
-    d.improvements.outbuildings = [
-      ...outbuildings,
-      {
-        id, name: `Building ${outbuildings.length + 2}`, type: 'Accessory',
-        yearBuilt: 2000, grossFloorArea: 500, nla: 500, quality: '',
-        constructionType: 'Wood frame, metal siding', stories: 1,
-        condition: 'Average', unitCost: 120,
-      },
-    ];
-    markDirty();
-    renderForm();
-    refreshComputed();
-  };
-
   const summary = section('Property Summary', null, null, ...propertySummaryGroups());
 
   // Outbuildings
   const obSection = outbuildings.length > 0
     ? section('Outbuildings', null, null,
         outbuildings.map((o) => {
-          const set = (patch) => {
-            d.improvements.outbuildings = d.improvements.outbuildings.map((x) => (x.id === o.id ? { ...x, ...patch } : x));
-            markDirty();
-            refreshComputed();
-          };
           const remove = () => {
             d.improvements.outbuildings = d.improvements.outbuildings.filter((x) => x.id !== o.id);
             markDirty();
@@ -918,12 +846,6 @@ let repoMinDate = '';
 let repoMaxDate = '';
 let repoSortKey = 'similarity';
 let repoSortDir = 'desc';
-
-function repoToast(msg, isError = false) {
-  const t = el('div', { class: `toast ${isError ? 'error' : ''}` }, msg);
-  document.body.append(t);
-  setTimeout(() => t.remove(), 3500);
-}
 
 async function loadRepo() {
   let perm = [], trans = [];
@@ -1150,19 +1072,19 @@ async function onRepoCsvFile(e) {
   if (!file) return;
   try {
     const { added, skipped } = importLocalComps(await file.text());
-    repoToast(`Imported ${added} local comp${added === 1 ? '' : 's'}${skipped ? ` · ${skipped} skipped` : ''} (this machine only).`);
+    toast(`Imported ${added} local comp${added === 1 ? '' : 's'}${skipped ? ` · ${skipped} skipped` : ''} (this machine only).`);
     loadRepo();
   } catch (err) {
-    repoToast(`CSV import failed: ${err.message}`, true);
+    toast(`CSV import failed: ${err.message}`, true);
   }
 }
 
 function onClearLocalComps() {
   const n = getLocalComps().length;
-  if (n === 0) { repoToast('No local comps to clear.'); return; }
+  if (n === 0) { toast('No local comps to clear.'); return; }
   if (!confirm(`Remove ${n} CSV-imported local comp${n === 1 ? '' : 's'} from this machine? Permanent comps are not affected.`)) return;
   clearLocalComps();
-  repoToast('Local comps cleared.');
+  toast('Local comps cleared.');
   loadRepo();
 }
 
@@ -1286,7 +1208,6 @@ function compPhotosPanel(comp) {
 }
 
 function compForm(comp, compIndex) {
-  const set = (patch) => compSet(comp, patch);
   return el('div', { class: 'comp-form' },
     el('div', { class: 'comp-form-head' },
       el('h3', {}, `Comparable #${compIndex + 1}`),
@@ -1753,7 +1674,7 @@ function coverTab() {
           renderForm();
           renderReport();
         } catch (e) {
-          repoToast(`Switching to ${value} failed: ${e.message}`, true);
+          toast(`Switching to ${value} failed: ${e.message}`, true);
         }
         scheduleAutosave();
       },

@@ -2,27 +2,13 @@
 // report.js — right staging: live report preview (print via window.print())
 // ---------------------------------------------------------------------------
 import {
-  state, computeAppraisal, hasCostData, hasIncomeData,
+  el, refreshTopBar, state, computeAppraisal, hasCostData, hasIncomeData,
   fmtCurrency, fmtCurrencyRounded, fmtNumber, fmtPct, fmtAcresNum, titleCase, normalizeCity, fmtDate, todayISO,
-  generateReconciliationNarrative, resolveSubjectImageUrl, resolveSubjectImageUrls,
+  generateReconciliationNarrative, resolveSubjectImageUrl,
   resolveSubjectPhotoUrls, resolveCoverPhotoUrl, resolveCompPhotoUrls, photoImg,
   computePortfolioAggregate, reportMode,
 } from './core.js';
 import { compositeParcelMap } from './mapimg.js';
-
-function el(tag, attrs = {}, ...children) {
-  const node = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) {
-    if (k === 'class') node.className = v;
-    else if (k.startsWith('on') && typeof v === 'function') node.addEventListener(k.slice(2), v);
-    else if (v !== null && v !== undefined) node.setAttribute(k, v);
-  }
-  for (const c of children.flat()) {
-    if (c === null || c === undefined || c === false) continue;
-    node.append(c.nodeType ? c : document.createTextNode(String(c)));
-  }
-  return node;
-}
 
 // Letter page wrapper: navy masthead + body + footer (matches original ReportSheet).
 function reportTitle(d) {
@@ -1035,65 +1021,6 @@ function portfolioCoverView(agg) {
   );
 }
 
-function portfolioAggregateView(agg) {
-  const parcels = state.portfolio.parcels;
-  const gfaOf = (p) => (p.improvements?.primary?.grossFloorArea ?? 0) +
-    (p.improvements?.outbuildings ?? []).reduce((s, o) => s + (o?.grossFloorArea ?? 0), 0);
-  return el('div', {},
-    portfolioBanner(agg),
-    heading('Portfolio Totals'),
-    kv([
-      ['Total Gross Floor Area', `${fmtNumber(agg.totalSqft)} sq ft`],
-      ['Total Net Leasable Area', `${fmtNumber(agg.totalNla)} sq ft`],
-      ['Total Site Area', `${fmtNumber(agg.totalSiteSqFt)} sq ft`],
-      ['Total Acreage', `${fmtAcresNum(agg.totalAcres)} ac`],
-      ['Total Land Value', fmtCurrency(agg.totalLandValue)],
-      ['Total Final Value', fmtCurrency(agg.totalFinalValue)],
-    ]),
-    heading('Per-Parcel Characteristics'),
-    table(
-      ['#', 'APN', 'Location / Intersection', 'Property Type', 'Zoning', 'Site (sq ft)', 'GFA (sq ft)', 'Land Value', 'Final Value'],
-      [
-        ...parcels.map((p, i) => [
-          i + 1,
-          p.property?.apn || '—',
-          el('span', { 'data-parcel-idx': i }, parcelIntersection(p)),
-          p.improvements?.primary?.type || '—',
-          p.land?.zoning || '—',
-          fmtNumber(p.land?.siteAreaSqFt ?? 0),
-          fmtNumber(gfaOf(p)),
-          fmtCurrency(p.land?.landValue ?? 0),
-          fmtCurrency(computeAppraisal(p).totalAssessed),
-        ]),
-        ['', 'Total', '', '', '', fmtNumber(agg.totalSiteSqFt), fmtNumber(agg.totalSqft), fmtCurrency(agg.totalLandValue), fmtCurrency(agg.totalFinalValue)],
-      ],
-    ),
-  );
-}
-
-function portfolioApproachView(approach, agg) {
-  const parcels = state.portfolio.parcels;
-  const titles = { cost: 'Cost Approach', income: 'Income Approach', sales: 'Sales Comparison', reconciliation: 'Reconciliation' };
-  const rows = parcels.map((p, i) => {
-    const c = computeAppraisal(p);
-    const value = approach === 'cost' ? c.cost.valueByCost
-      : approach === 'income' ? c.income.valueByIncome
-      : approach === 'sales' ? c.sales.valueBySales
-      : c.totalAssessed;
-    return [`${i + 1}. ${p.property?.address || '—'}`, p.property?.apn || '—', fmtCurrency(value)];
-  });
-  const total = approach === 'cost' ? agg.totalCostValue
-    : approach === 'income' ? agg.totalIncomeValue
-    : approach === 'sales' ? agg.totalSalesValue
-    : agg.totalFinalValue;
-  return el('div', {},
-    portfolioBanner(agg),
-    heading(`${titles[approach]} — Portfolio Sums`),
-    table(['Parcel', 'APN', 'Indicated Value'], [...rows, ['Total', '', fmtCurrency(total)]]),
-    el('div', { class: 'pf-callout-wrap' }, valueCallout(`Total ${titles[approach]}`, fmtCurrency(total))),
-  );
-}
-
 export function renderReport() {
   const root = document.getElementById('report-root');
   if (!root) return;
@@ -1120,7 +1047,7 @@ export function renderReport() {
     const meta = document.querySelector('.staging-toolbar .st-meta');
     if (meta) meta.textContent = `${total} sheets · 8.5×11`;
     fitSheets();
-    updateTopBar();
+    refreshTopBar();
     // Load the combined parcel map image (composited in the browser).
     root.querySelectorAll('.pf-map[data-apns]').forEach((box) => {
       const apns = box.dataset.apns;
@@ -1154,7 +1081,7 @@ export function renderReport() {
   const meta = document.querySelector('.staging-toolbar .st-meta');
   if (meta) meta.textContent = `${total} sheets · 8.5×11`;
   fitSheets();
-  updateTopBar();
+  refreshTopBar();
 }
 
 // --- zoom (mirrors the original RightStaging auto-fit / manual zoom) ---
@@ -1208,28 +1135,6 @@ export function scrollToSection(sectionId) {
   if (!target) return;
   const top = target.getBoundingClientRect().top - root.getBoundingClientRect().top + root.scrollTop;
   root.scrollTo({ top, behavior: 'smooth' });
-}
-
-// Live top bar: property headline + total assessed (matches original TopBar).
-function updateTopBar() {
-  const addr = document.getElementById('tb-addr');
-  const sub = document.getElementById('tb-sub');
-  const val = document.getElementById('tb-value');
-  const label = document.querySelector('.tb-value .label');
-  if (reportMode() === 'portfolio') {
-    const agg = computePortfolioAggregate(state.portfolio.parcels);
-    if (addr) addr.textContent = `Portfolio (${agg.parcelCount} parcels)`;
-    if (sub) sub.textContent = 'MULTI-PARCEL';
-    if (val) val.textContent = fmtCurrency(agg.totalFinalValue);
-    if (label) label.textContent = 'Total Portfolio Value';
-    return;
-  }
-  const p = state.data.property;
-  const comp = computeAppraisal(state.data);
-  if (addr) addr.textContent = [titleCase(p.address), normalizeCity(p.city)].map((v) => (v ?? '').trim()).filter(Boolean).join(', ') || '—';
-  if (sub) sub.textContent = `APN ${p.apn || '—'} · Effective ${fmtDate(p.effectiveDate)}`;
-  if (val) val.textContent = fmtCurrency(comp.totalAssessed);
-  if (label) label.textContent = 'Total Assessed';
 }
 
 // --- PDF ---------------------------------------------------------------------

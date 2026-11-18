@@ -9,6 +9,53 @@ const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
 // Coerce to a finite number (county data arrives as strings like "1.760").
 const safe = (n) => { const v = Number(n); return Number.isFinite(v) ? v : 0; };
 
+// --- shared DOM helpers ------------------------------------------------------
+// Tiny hyperscript-style element builder shared by main.js / form.js / report.js
+// (previously copy-pasted into each of those modules).
+export function el(tag, attrs = {}, ...children) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === 'class') node.className = v;
+    else if (k.startsWith('on') && typeof v === 'function') node.addEventListener(k.slice(2), v);
+    else if (v !== null && v !== undefined) node.setAttribute(k, v);
+  }
+  for (const c of children.flat()) {
+    if (c === null || c === undefined || c === false) continue;
+    node.append(c.nodeType ? c : document.createTextNode(String(c)));
+  }
+  return node;
+}
+
+// Transient toast notification (auto-dismisses after 3s).
+export function toast(msg, isError = false) {
+  const t = el('div', { class: `toast ${isError ? 'error' : ''}` }, msg);
+  document.body.append(t);
+  setTimeout(() => t.remove(), 3000);
+}
+
+// Keep the top-bar headline + total assessed in sync with the form. Single
+// source of truth for the top bar (previously duplicated as refreshTopBar in
+// main.js and updateTopBar in report.js, which disagreed on the headline text).
+export function refreshTopBar() {
+  const addr = document.getElementById('tb-addr');
+  const sub = document.getElementById('tb-sub');
+  const val = document.getElementById('tb-value');
+  const label = document.querySelector('.tb-value .label');
+  if (reportMode() === 'portfolio') {
+    const agg = computePortfolioAggregate(state.portfolio.parcels);
+    if (addr) addr.textContent = `Portfolio (${agg.parcelCount} parcels)`;
+    if (sub) sub.textContent = 'MULTI-PARCEL';
+    if (val) val.textContent = fmtCurrency(agg.totalFinalValue);
+    if (label) label.textContent = 'Total Portfolio Value';
+    return;
+  }
+  const d = state.data;
+  if (addr) addr.textContent = d.property.address || d.property.apn || '—';
+  if (sub) sub.textContent = [normalizeCity(d.property.city), d.property.apn].filter(Boolean).join(' · ');
+  if (val) val.textContent = fmtCurrency(computeAppraisal(d).totalAssessed);
+  if (label) label.textContent = 'Total Assessed';
+}
+
 // --- calculations -----------------------------------------------------------
 
 export function computeCost(data) {
@@ -98,7 +145,7 @@ export function computeSales(data) {
   const valueBySales = safe(correlatedSF * subjectSF);
   return {
     valueBySales: round2(valueBySales),
-    count: pool.length,
+    count: comps.length,
     correlatedSF: round2(correlatedSF),
     subjectSF: round2(subjectSF),
   };
