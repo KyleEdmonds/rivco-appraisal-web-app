@@ -85,8 +85,3 @@ npm run lint    # ESLint
 - Validation layer over the appraisal/comp model (a JS pass mirroring the reference app's Zod schemas)
 - Theme system (dark mode via `:root` variable overrides + theme picker)
 - Image compression/hashing for uploaded photos (resize + SHA-256 dedup)
-
-## Branches
-
-- `APPRAISAL_WORKBENCH` — active development
-- `STARTING_TO_USE_RIVCO_TRANSFERS` — reference snapshot
